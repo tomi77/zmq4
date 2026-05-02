@@ -238,3 +238,39 @@ func TestDecodeFrameBodyAliasesInput(t *testing.T) {
 		t.Fatal("Body does not alias src — zero-copy contract violated")
 	}
 }
+
+func TestEncodeDecodeMultipartSequence(t *testing.T) {
+	frames := []Frame{
+		{Kind: FrameMessage, More: true, Body: []byte("part-1")},
+		{Kind: FrameMessage, More: true, Body: []byte("part-2")},
+		{Kind: FrameMessage, More: false, Body: []byte("part-3-last")},
+	}
+	var buf bytes.Buffer
+	scratch := make([]byte, 64)
+	for _, f := range frames {
+		n, err := EncodeFrame(scratch[:f.WireSize()], f)
+		if err != nil {
+			t.Fatalf("encode: %v", err)
+		}
+		buf.Write(scratch[:n])
+	}
+
+	in := buf.Bytes()
+	var got []Frame
+	for len(in) > 0 {
+		f, n, err := DecodeFrame(in)
+		if err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		got = append(got, Frame{Kind: f.Kind, More: f.More, Body: append([]byte(nil), f.Body...)})
+		in = in[n:]
+	}
+	if len(got) != len(frames) {
+		t.Fatalf("got %d frames, want %d", len(got), len(frames))
+	}
+	for i, f := range frames {
+		if got[i].Kind != f.Kind || got[i].More != f.More || !bytes.Equal(got[i].Body, f.Body) {
+			t.Fatalf("frame %d: got %+v, want %+v", i, got[i], f)
+		}
+	}
+}
