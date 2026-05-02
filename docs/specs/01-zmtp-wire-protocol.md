@@ -1,6 +1,6 @@
 # 01 — ZMTP 3.1 wire protocol (Phase 1)
 
-> **Status:** draft, awaiting approval before implementation.
+> **Status:** implemented, frozen for F2+.
 > **Author:** Tomasz Rup
 > **Date:** 2026-05-02
 > **Layer:** L1 — `internal/wire`
@@ -446,16 +446,16 @@ A `go test -fuzz` target on `DecodeFrame` and `DecodeGreeting`:
 
 Phase 1 is "done" when:
 
-- [ ] All public functions in §4 are implemented and documented.
-- [ ] All tests in §9 pass: unit, property-based, captured-wire,
+- [x] All public functions in §4 are implemented and documented.
+- [x] All tests in §9 pass: unit, property-based, captured-wire,
       streaming, fuzz.
-- [ ] `go vet ./internal/wire/...` clean. `staticcheck` clean.
-- [ ] `testing.AllocsPerRun` shows zero allocations for `EncodeFrame` and
+- [x] `go vet ./internal/wire/...` clean. `staticcheck` clean.
+- [x] `testing.AllocsPerRun` shows zero allocations for `EncodeFrame` and
       `DecodeFrame` in the documented hot paths.
-- [ ] At least one captured-wire vector exists for: greeting (NULL),
+- [x] At least one captured-wire vector exists for: greeting (NULL),
       message frame (short and long), multipart message, READY,
       ERROR, PING, PONG, SUBSCRIBE, CANCEL.
-- [ ] Code review against this spec confirms no requirement is missed.
+- [x] Code review against this spec confirms no requirement is missed.
 
 The package is then frozen until F4 needs to consume it; bug fixes only.
 
