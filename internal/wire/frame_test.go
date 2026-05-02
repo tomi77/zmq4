@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"testing/quick"
 )
 
 func TestFrameWireSize(t *testing.T) {
@@ -272,5 +273,31 @@ func TestEncodeDecodeMultipartSequence(t *testing.T) {
 		if got[i].Kind != f.Kind || got[i].More != f.More || !bytes.Equal(got[i].Body, f.Body) {
 			t.Fatalf("frame %d: got %+v, want %+v", i, got[i], f)
 		}
+	}
+}
+
+func TestFrameRoundTripProperty(t *testing.T) {
+	prop := func(kind uint8, more bool, body []byte) bool {
+		k := FrameMessage
+		if kind%2 == 1 {
+			k = FrameCommand
+		}
+		// Commands cannot have MORE.
+		if k == FrameCommand {
+			more = false
+		}
+		f := Frame{Kind: k, More: more, Body: body}
+		buf := make([]byte, f.WireSize())
+		if _, err := EncodeFrame(buf, f); err != nil {
+			return false
+		}
+		got, n, err := DecodeFrame(buf)
+		if err != nil || n != len(buf) {
+			return false
+		}
+		return got.Kind == f.Kind && got.More == f.More && bytes.Equal(got.Body, f.Body)
+	}
+	if err := quick.Check(prop, &quick.Config{MaxCount: 1000}); err != nil {
+		t.Fatal(err)
 	}
 }
