@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"testing"
+	"testing/quick"
 )
 
 func TestEncodeGreetingDecodeGreetingRoundTrip(t *testing.T) {
@@ -151,5 +152,39 @@ func TestEncodeGreetingZeroAllocations(t *testing.T) {
 	})
 	if got != 0 {
 		t.Fatalf("EncodeGreeting allocates %v allocs/op, want 0", got)
+	}
+}
+
+func TestGreetingRoundTripProperty(t *testing.T) {
+	allowed := []byte{}
+	for c := byte('A'); c <= 'Z'; c++ {
+		allowed = append(allowed, c)
+	}
+	for c := byte('0'); c <= '9'; c++ {
+		allowed = append(allowed, c)
+	}
+	allowed = append(allowed, '-', '_', '.', '+')
+
+	prop := func(seed int64, asServer bool) bool {
+		// Build a deterministic mechanism string from seed: 0..20 chars
+		// from the allowed set.
+		n := int(uint(seed) % 21) // 0..20 chars
+		mech := make([]byte, n)
+		for i := 0; i < n; i++ {
+			mech[i] = allowed[uint(seed>>uint(i))%uint(len(allowed))]
+		}
+		g := Greeting{Mechanism: string(mech), AsServer: asServer}
+		var buf [GreetingSize]byte
+		if err := EncodeGreeting(buf[:], g); err != nil {
+			return false
+		}
+		got, err := DecodeGreeting(buf[:])
+		if err != nil {
+			return false
+		}
+		return got == g
+	}
+	if err := quick.Check(prop, &quick.Config{MaxCount: 1000}); err != nil {
+		t.Fatal(err)
 	}
 }

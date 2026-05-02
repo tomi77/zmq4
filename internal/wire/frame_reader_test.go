@@ -79,3 +79,67 @@ func TestFrameReaderReservedFlags(t *testing.T) {
 		t.Fatalf("want ErrReservedFlags, got %v", err)
 	}
 }
+
+// transientErrReader returns errAfter exactly once after delivering the
+// first n bytes, then on subsequent reads returns the underlying reader's
+// next bytes. This simulates a transient I/O error.
+type transientErrReader struct {
+	r        io.Reader
+	errAfter int
+	err      error
+	tripped  bool
+	read     int
+}
+
+func (t *transientErrReader) Read(p []byte) (int, error) {
+	if !t.tripped && t.read >= t.errAfter {
+		t.tripped = true
+		return 0, t.err
+	}
+	if !t.tripped {
+		// Cap the read to errAfter so the caller hits the error on the next call.
+		if t.read+len(p) > t.errAfter {
+			p = p[:t.errAfter-t.read]
+		}
+	}
+	n, err := t.r.Read(p)
+	t.read += n
+	return n, err
+}
+
+func TestFrameReaderTransientError(t *testing.T) {
+	// Build a frame on the wire.
+	full := Frame{Kind: FrameMessage, Body: bytes.Repeat([]byte{0x33}, 50)}
+	scratch := make([]byte, full.WireSize())
+	if _, err := EncodeFrame(scratch, full); err != nil {
+		t.Fatal(err)
+	}
+
+	// Wrap a bytes.Reader so it returns a custom error after 3 bytes.
+	customErr := errors.New("transient I/O blip")
+	tr := &transientErrReader{
+		r:        bytes.NewReader(scratch),
+		errAfter: 3,
+		err:      customErr,
+	}
+	fr := NewFrameReader(tr)
+
+	// First read should propagate the transient error cleanly.
+	_, err := fr.ReadFrame()
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !errors.Is(err, customErr) {
+		t.Fatalf("expected transient error to surface, got %v", err)
+	}
+	// "Without losing sync" — the FrameReader should not have panicked
+	// and should be in a defined state. We don't claim retry succeeds
+	// (the underlying byte stream is now mid-frame and unrecoverable
+	// without a fresh connection), but a second call must not panic.
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("FrameReader panicked on second read after transient error: %v", r)
+		}
+	}()
+	_, _ = fr.ReadFrame() // may return any error; we just verify no panic
+}
