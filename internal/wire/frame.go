@@ -71,3 +71,52 @@ func EncodeFrame(dst []byte, f Frame) (int, error) {
 	copy(dst[off:], f.Body)
 	return need, nil
 }
+
+// DecodeFrame parses one frame starting at src[0]. Returns the parsed
+// frame, the number of input bytes consumed, and any error. Body
+// aliases src (zero-copy); copy if you retain it past the next decode.
+func DecodeFrame(src []byte) (Frame, int, error) {
+	if len(src) < 1 {
+		return Frame{}, 0, ErrShortBuffer
+	}
+	flags := src[0]
+	if flags&0xF8 != 0 {
+		return Frame{}, 0, ErrReservedFlags
+	}
+	more := flags&0x01 != 0
+	long := flags&0x02 != 0
+	cmd := flags&0x04 != 0
+	if cmd && more {
+		return Frame{}, 0, ErrCommandHasMore
+	}
+
+	off := 1
+	var size uint64
+	if long {
+		if len(src) < off+8 {
+			return Frame{}, 0, ErrShortBuffer
+		}
+		size = binary.BigEndian.Uint64(src[off : off+8])
+		off += 8
+	} else {
+		if len(src) < off+1 {
+			return Frame{}, 0, ErrShortBuffer
+		}
+		size = uint64(src[off])
+		off++
+	}
+
+	if uint64(len(src)-off) < size {
+		return Frame{}, 0, ErrShortBuffer
+	}
+	end := off + int(size)
+	kind := FrameMessage
+	if cmd {
+		kind = FrameCommand
+	}
+	return Frame{
+		Kind: kind,
+		More: more,
+		Body: src[off:end],
+	}, end, nil
+}

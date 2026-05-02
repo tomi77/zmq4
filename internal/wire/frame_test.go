@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"testing"
 )
 
@@ -129,5 +130,111 @@ func TestEncodeFrameZeroAllocations(t *testing.T) {
 	})
 	if got != 0 {
 		t.Fatalf("EncodeFrame allocates %v allocs/op, want 0", got)
+	}
+}
+
+func TestDecodeFrameRoundTrip(t *testing.T) {
+	cases := []struct {
+		name string
+		f    Frame
+	}{
+		{"empty-msg-last", Frame{Kind: FrameMessage}},
+		{"empty-msg-more", Frame{Kind: FrameMessage, More: true}},
+		{"short-msg-last", Frame{Kind: FrameMessage, Body: []byte("hi")}},
+		{"short-msg-more", Frame{Kind: FrameMessage, More: true, Body: []byte("hi")}},
+		{"boundary-255", Frame{Kind: FrameMessage, Body: bytes.Repeat([]byte{1}, 255)}},
+		{"long-256", Frame{Kind: FrameMessage, Body: bytes.Repeat([]byte{2}, 256)}},
+		{"long-1mib", Frame{Kind: FrameMessage, Body: bytes.Repeat([]byte{3}, 1<<20)}},
+		{"short-cmd", Frame{Kind: FrameCommand, Body: []byte("READY")}},
+		{"long-cmd", Frame{Kind: FrameCommand, Body: bytes.Repeat([]byte{4}, 500)}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			buf := make([]byte, c.f.WireSize())
+			if _, err := EncodeFrame(buf, c.f); err != nil {
+				t.Fatalf("encode: %v", err)
+			}
+			got, n, err := DecodeFrame(buf)
+			if err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if n != len(buf) {
+				t.Fatalf("consumed %d, want %d", n, len(buf))
+			}
+			if got.Kind != c.f.Kind || got.More != c.f.More {
+				t.Fatalf("got %+v, want %+v", got, c.f)
+			}
+			if !bytes.Equal(got.Body, c.f.Body) {
+				t.Fatal("body mismatch")
+			}
+		})
+	}
+}
+
+func TestDecodeFrameTruncated(t *testing.T) {
+	cases := []struct {
+		name string
+		buf  []byte
+	}{
+		{"empty", []byte{}},
+		{"flag-only", []byte{0x00}},
+		{"short-trunc-body", []byte{0x00, 0x05, 'h', 'i'}},
+		{"long-trunc-size", []byte{0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01}}, // missing 1 size byte
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if _, _, err := DecodeFrame(c.buf); !errors.Is(err, ErrShortBuffer) {
+				t.Fatalf("want ErrShortBuffer, got %v", err)
+			}
+		})
+	}
+}
+
+func TestDecodeFrameReservedFlags(t *testing.T) {
+	for _, flag := range []byte{0x08, 0x10, 0x20, 0x40, 0x80} {
+		t.Run(fmt.Sprintf("flag-%02X", flag), func(t *testing.T) {
+			buf := []byte{flag, 0x00}
+			if _, _, err := DecodeFrame(buf); !errors.Is(err, ErrReservedFlags) {
+				t.Fatalf("want ErrReservedFlags, got %v", err)
+			}
+		})
+	}
+}
+
+func TestDecodeFrameCommandWithMoreInvalid(t *testing.T) {
+	buf := []byte{0x05, 0x00} // 0x04 (command) | 0x01 (more)
+	if _, _, err := DecodeFrame(buf); !errors.Is(err, ErrCommandHasMore) {
+		t.Fatalf("want ErrCommandHasMore, got %v", err)
+	}
+	buf = []byte{0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00} // 0x06 | 0x01
+	if _, _, err := DecodeFrame(buf); !errors.Is(err, ErrCommandHasMore) {
+		t.Fatalf("want ErrCommandHasMore, got %v", err)
+	}
+}
+
+func TestDecodeFrameZeroAllocations(t *testing.T) {
+	f := Frame{Kind: FrameMessage, Body: bytes.Repeat([]byte{0xAA}, 1024)}
+	buf := make([]byte, f.WireSize())
+	if _, err := EncodeFrame(buf, f); err != nil {
+		t.Fatal(err)
+	}
+	got := testing.AllocsPerRun(1000, func() {
+		_, _, _ = DecodeFrame(buf)
+	})
+	if got != 0 {
+		t.Fatalf("DecodeFrame allocates %v allocs/op, want 0", got)
+	}
+}
+
+func TestDecodeFrameBodyAliasesInput(t *testing.T) {
+	src := []byte{0x00, 0x03, 'a', 'b', 'c'}
+	got, _, err := DecodeFrame(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Mutate the input buffer; the Body should reflect it (zero-copy).
+	src[2] = 'X'
+	if got.Body[0] != 'X' {
+		t.Fatal("Body does not alias src — zero-copy contract violated")
 	}
 }
