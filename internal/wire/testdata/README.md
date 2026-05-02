@@ -80,3 +80,24 @@ export ZMQ4_VECTORS_PENDING=1
 
 Without that variable the tests will fail with a clear error message pointing
 back to this README.
+
+---
+
+## F1 hand-crafted vectors
+
+The 14 binary vectors in `testdata/interop/` were hand-crafted in Phase 1 (F1)
+by encoding them directly through the codec from ABNF-derived values specified
+in `docs/specs/01-zmtp-wire-protocol.md` (RFC 37). This approach is valid for
+all Phase 1 vectors because they cover purely structural content — greetings
+(which precede any encryption) and command bodies (READY, ERROR, PING, PONG,
+SUBSCRIBE, CANCEL) — and contain no CURVE cryptographic state.
+
+Three representative vectors were spot-checked with `xxd` against the
+expected byte layout from the ABNF table before committing:
+`greeting-null.bin`, `frame-empty.bin`, `cmd-ping.bin`, `frame-long.bin`,
+`cmd-ready-typical.bin`, and `cmd-error.bin`.
+
+Cross-validation against captured real libzmq traffic is planned for
+**Phase 4 (F4) interop testing**. At that point the `.bin` files will be
+replaced (or supplemented) with bytes captured from a live libzmq exchange,
+and the `capture.sh` script will be used to regenerate them.
