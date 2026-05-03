@@ -10,7 +10,7 @@ import (
 // and not safe for concurrent use.
 type State struct {
 	local    wire.Metadata
-	peer     wire.Metadata
+	peer     wire.Metadata // populated by Receive on a valid peer READY
 	started  bool
 	received bool
 	failed   bool

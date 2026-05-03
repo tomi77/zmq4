@@ -117,7 +117,6 @@ package null
 
 import (
 	"errors"
-	"strings"
 	"testing"
 
 	"github.com/tomi77/zmq4/internal/wire"
@@ -383,7 +382,7 @@ git commit -m "security/null: Receive happy path with metadata copy"
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `state_test.go`:
+Add `"strings"` to the import block of `state_test.go` (it is needed by the new test below). Then append:
 
 ```go
 func TestReceiveErrorWrapsReason(t *testing.T) {
