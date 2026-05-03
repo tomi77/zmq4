@@ -9,8 +9,9 @@ var (
 	// ErrNotStarted is returned by Receive when called before Start.
 	ErrNotStarted = errors.New("null: handshake not started")
 
-	// ErrAlreadyDone is returned when any method is called after a
-	// previous Receive returned done=true.
+	// ErrAlreadyDone is returned by Receive when called after a previous
+	// Receive returned done=true. Start in the same situation returns
+	// ErrAlreadyStarted, since Start completed successfully on first call.
 	ErrAlreadyDone = errors.New("null: handshake already complete")
 
 	// ErrAlreadyFailed is returned when any method is called after a
