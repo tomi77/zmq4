@@ -126,3 +126,84 @@ func TestReceiveErrorWrapsReason(t *testing.T) {
 		t.Fatalf("Done()=true after ERROR")
 	}
 }
+
+func TestReceiveBeforeStart(t *testing.T) {
+	s := New(nil)
+	cmd, _ := wire.ReadyCommand{}.Encode()
+	_, _, err := s.Receive(cmd)
+	if !errors.Is(err, ErrNotStarted) {
+		t.Fatalf("Receive before Start = %v, want ErrNotStarted", err)
+	}
+}
+
+func TestReceiveMalformedReady(t *testing.T) {
+	bad := wire.Command{
+		Name: wire.ReadyCommandName,
+		// Truncated metadata: nameLen=5 but only 2 bytes follow.
+		Data: []byte{0x05, 'A', 'B'},
+	}
+	s := New(nil)
+	if _, err := s.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	_, _, err := s.Receive(bad)
+	if !errors.Is(err, ErrMalformedReady) {
+		t.Fatalf("Receive(malformed) = %v, want ErrMalformedReady", err)
+	}
+}
+
+func TestReceiveUnexpectedCommand(t *testing.T) {
+	cmd := wire.Command{Name: "PING", Data: nil}
+	s := New(nil)
+	if _, err := s.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	_, _, err := s.Receive(cmd)
+	if !errors.Is(err, ErrUnexpectedCommand) {
+		t.Fatalf("Receive(PING) = %v, want ErrUnexpectedCommand", err)
+	}
+}
+
+func TestReceiveAfterDone(t *testing.T) {
+	peerCmd, _ := wire.ReadyCommand{}.Encode()
+	s := New(nil)
+	if _, err := s.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if _, _, err := s.Receive(peerCmd); err != nil {
+		t.Fatalf("first Receive: %v", err)
+	}
+	_, _, err := s.Receive(peerCmd)
+	if !errors.Is(err, ErrAlreadyDone) {
+		t.Fatalf("second Receive = %v, want ErrAlreadyDone", err)
+	}
+}
+
+func TestReceiveAfterFailed(t *testing.T) {
+	cmd := wire.Command{Name: "PING"}
+	s := New(nil)
+	if _, err := s.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if _, _, err := s.Receive(cmd); !errors.Is(err, ErrUnexpectedCommand) {
+		t.Fatalf("first Receive: %v", err)
+	}
+	_, _, err := s.Receive(cmd)
+	if !errors.Is(err, ErrAlreadyFailed) {
+		t.Fatalf("Receive after failure = %v, want ErrAlreadyFailed", err)
+	}
+}
+
+func TestStartAfterFailedReturnsAlreadyFailed(t *testing.T) {
+	s := New(nil)
+	if _, err := s.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if _, _, err := s.Receive(wire.Command{Name: "PING"}); !errors.Is(err, ErrUnexpectedCommand) {
+		t.Fatalf("Receive: %v", err)
+	}
+	_, err := s.Start()
+	if !errors.Is(err, ErrAlreadyFailed) {
+		t.Fatalf("Start after failure = %v, want ErrAlreadyFailed", err)
+	}
+}
