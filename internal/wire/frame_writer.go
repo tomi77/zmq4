@@ -49,12 +49,11 @@ func (fw *FrameWriter) WriteFrame(f Frame) error {
 	} else {
 		fw.header[1] = byte(len(f.Body))
 	}
-	if len(f.Body) == 0 {
-		_, err := fw.w.Write(fw.header[:hdrLen])
-		return err
-	}
 	// Reuse bufsArr instead of a fresh net.Buffers literal: the literal
 	// would heap-allocate the underlying [2][]byte on every call.
+	// net.Buffers.WriteTo handles partial writes internally (retries until
+	// all bytes are flushed or an error occurs), so both empty and non-empty
+	// bodies are safe against partial-write silently dropping data.
 	fw.bufsArr[0] = fw.header[:hdrLen]
 	fw.bufsArr[1] = f.Body
 	bufs := net.Buffers(fw.bufsArr[:])

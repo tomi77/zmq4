@@ -330,8 +330,9 @@ type FrameReader struct {
 }
 
 type FrameWriter struct {
-    w      io.Writer
-    header [9]byte
+    w       io.Writer
+    header  [9]byte
+    bufsArr [2][]byte // backing array reused per call to avoid heap allocs
 }
 ```
 
@@ -460,6 +461,13 @@ Initial vectors:
 - A reader that returns `io.ErrUnexpectedEOF` mid-frame.
 - A reader that returns a transient error then resumes (must surface error
   cleanly without losing sync).
+
+`FrameWriter` is exercised with:
+- Empty body frames (`Body: nil` and `Body: []byte{}`), for both
+  `FrameMessage` and `FrameCommand`, to ensure the `net.Buffers` path
+  handles a zero-length trailing slice without emitting extra bytes.
+  This also guards the removal of the former `len(Body)==0` special case
+  that used a raw `Write` call (which did not retry on partial writes).
 
 ### 9.5 Fuzzing
 
