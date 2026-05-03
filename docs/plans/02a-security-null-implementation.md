@@ -423,12 +423,11 @@ Add a case before the default in `Receive`:
 
 ```go
 case wire.ErrorCommandName:
+	s.failed = true
 	ec, perr := wire.ParseError(cmd)
 	if perr != nil {
-		s.failed = true
 		return nil, false, fmt.Errorf("%w: malformed ERROR: %v", ErrPeerError, perr)
 	}
-	s.failed = true
 	return nil, false, fmt.Errorf("%w: %s", ErrPeerError, ec.Reason)
 ```
 
