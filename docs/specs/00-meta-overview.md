@@ -1,8 +1,9 @@
 # 00 — Meta-overview
 
-> **Status:** draft, awaiting approval before Phase 1 begins.
+> **Status:** living document. F1 and F2a complete and tagged
+> (`phase-1-wire-complete`, `phase-2a-null-complete`); later phases pending.
 > **Author:** Tomasz Rup
-> **Date:** 2026-05-02
+> **Date:** 2026-05-02 (last updated 2026-05-03)
 
 This document defines the overall plan for `github.com/tomi77/zmq4`: a pure-Go
 implementation of [ZeroMQ](https://zeromq.org/) that speaks
@@ -95,16 +96,23 @@ The project is built strictly **layer by layer**, bottom up. End-to-end
 functionality only appears at Phase 4 — earlier phases are testable but not
 yet usable from a user's perspective.
 
-| Phase | Spec | Scope | First testable as |
-|-------|------|-------|-------------------|
-| F1 | `01-zmtp-wire-protocol.md` | ZMTP 3.1: greeting, frames, multipart, traffic commands. **No I/O.** | Property-based tests against captured `libzmq` wire dumps. |
-| F2 | `02-security.md` | NULL, PLAIN, CURVE handshake state machines. **No I/O.** | Unit tests + handshake interop with captured `libzmq` traces. |
-| F3 | `03-transports.md` | `tcp`, `ipc`, `inproc` listener/dialer abstractions. | Self-loopback tests (our dialer ↔ our listener). |
-| F4 | `04-connection-layer.md` | Wire-up of F1+F2+F3. Handshake, frame stream, error handling. | **First live interop with `libzmq`** (NULL handshake, then PLAIN, then CURVE). |
-| F5a | `05a-sockets-reqrep.md` | `REQ`, `REP`, `ROUTER`, `DEALER`. | Interop with `libzmq` REQ/REP patterns. |
-| F5b | `05b-sockets-pubsub.md` | `PUB`, `SUB`, `XPUB`, `XSUB`. Topic filtering. | Interop with `libzmq` pub/sub patterns. |
-| F5c | `05c-sockets-pipeline-pair.md` | `PUSH`, `PULL`, `PAIR`. | Interop with `libzmq` pipeline/pair. |
-| F6 | `06-zap-monitoring.md` | ZAP auth, socket monitoring events, HWM tuning, polling. | Interop and full integration. |
+F2 (security mechanisms) was split into three independently-shipped sub-phases
+F2a/F2b/F2c so each mechanism can be specced, reviewed, and frozen on its own
+schedule without waiting for the others. The shared `Mechanism` interface is
+deferred until all three concrete implementations exist (extracted in F2c).
+
+| Phase | Spec | Scope | First testable as | Status |
+|-------|------|-------|-------------------|--------|
+| F1 | `01-zmtp-wire-protocol.md` | ZMTP 3.1: greeting, frames, multipart, traffic commands. **No I/O.** | Property + vector tests; vectors hand-crafted from RFC 23 ABNF using our own encoder. libzmq cross-validation deferred to F4 interop. | **Complete** — tagged `phase-1-wire-complete`. |
+| F2a | `02a-security-null.md` | NULL handshake state machine. **No I/O.** | Unit + property + vector tests; vectors hand-crafted from RFC 37 §3 using F1's encoder. libzmq cross-validation deferred to F4 interop. | **Complete** — tagged `phase-2a-null-complete`. |
+| F2b | `02b-security-plain.md` | PLAIN handshake state machine. **No I/O.** | Same shape as F2a. | Pending. |
+| F2c | `02c-security-curve.md` | CURVE handshake state machine. **No I/O.** Extracts the shared `Mechanism` interface across F2a/F2b/F2c. | Same shape as F2a, plus crypto vectors. | Pending. |
+| F3 | `03-transports.md` | `tcp`, `ipc`, `inproc` listener/dialer abstractions. | Self-loopback tests (our dialer ↔ our listener). | Pending. |
+| F4 | `04-connection-layer.md` | Wire-up of F1+F2+F3. Handshake, frame stream, error handling. | **First live interop with `libzmq`** (NULL handshake, then PLAIN, then CURVE). | Pending. |
+| F5a | `05a-sockets-reqrep.md` | `REQ`, `REP`, `ROUTER`, `DEALER`. | Interop with `libzmq` REQ/REP patterns. | Pending. |
+| F5b | `05b-sockets-pubsub.md` | `PUB`, `SUB`, `XPUB`, `XSUB`. Topic filtering. | Interop with `libzmq` pub/sub patterns. | Pending. |
+| F5c | `05c-sockets-pipeline-pair.md` | `PUSH`, `PULL`, `PAIR`. | Interop with `libzmq` pipeline/pair. | Pending. |
+| F6 | `06-zap-monitoring.md` | ZAP auth, socket monitoring events, HWM tuning, polling. | Interop and full integration. | Pending. |
 
 Each phase is gated: **the next phase does not start until the previous one
 is merged with all its tests passing.**
@@ -169,20 +177,23 @@ The thing that catches **wire-format drift**. From Phase 4 onwards.
 - Run nightly in CI plus on demand. Not a precondition for every push because
   Docker/`libzmq` startup is slow.
 
-### Captured-wire tests (a.k.a. "vector tests")
+### Vector tests
 
-Before we have full interop (i.e. during F1 and F2), we can still pin
-correctness against `libzmq` by:
+Before we have full interop (i.e. during F1 and F2), we still pin codec
+correctness against the RFC by:
 
-- Capturing actual wire bytes of `libzmq` ↔ `libzmq` interactions
-  (greeting, NULL handshake, PLAIN handshake, CURVE handshake, sample
-  message frames) into `testdata/interop/*.bin`.
+- Hand-crafting wire-byte vectors derived directly from each RFC's ABNF
+  (greeting, frames, NULL/PLAIN/CURVE handshake commands, sample message
+  bodies) into `internal/<layer>/testdata/*.bin`. F2 vectors are built
+  using F1's encoder so the two layers exercise each other.
 - Asserting that our codec parses those bytes correctly.
 - Asserting that our encoder produces byte-identical output for the same
   inputs.
 
 This lets us validate L1 and L2 long before we have a working connection
-layer.
+layer. **libzmq cross-validation is deferred to F4 interop** — once a live
+connection exists, captured `libzmq` ↔ `libzmq` traces can supplement the
+hand-crafted vectors, but they are not a precondition for landing F1 or F2.
 
 ## 7. Meta decisions
 
