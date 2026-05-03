@@ -23,8 +23,12 @@ handshake, or socket-type semantics. Those are later phases. This phase is
 
 A thin streaming layer over `io.Reader` / `io.Writer` is included so that
 later phases (and tests) don't have to reinvent length-prefixed frame reads.
-It still does no networking, blocking, or concurrency: it strictly uses the
-caller-provided `io` interfaces.
+It still does no networking I/O of its own — no `Dial`, `Listen`, or socket
+ownership — and no blocking or concurrency: it strictly uses the caller-
+provided `io` interfaces. The one exception is `net.Buffers`, used by
+`FrameWriter` to emit header+body in a single writev syscall when the
+caller's writer supports it (e.g. `*net.TCPConn`); it is a passive batching
+helper, not a networking primitive.
 
 ## 2. Mapping to RFC 37/ZMTP 3.1
 

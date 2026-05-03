@@ -81,8 +81,8 @@ is enforced by package boundaries (`internal/...`).
 
 | Layer | Package | Responsibility | Forbidden dependencies |
 |-------|---------|----------------|------------------------|
-| L1 | `internal/wire` | ZMTP framing & greeting codec. Pure functions over byte buffers. | `net`, goroutines, time |
-| L2 | `internal/security` | NULL/PLAIN/CURVE handshake state machines. Pure logic. | `net`, goroutines, time |
+| L1 | `internal/wire` | ZMTP framing & greeting codec. Pure functions over byte buffers. | I/O primitives (`net.Dial`/`net.Listen`/`net.Conn`/socket types), goroutines, time. Passive helpers from `net` (e.g. `net.Buffers` as a writev batcher around caller-provided `io.Writer`s) are allowed. |
+| L2 | `internal/security` | NULL/PLAIN/CURVE handshake state machines. Pure logic. | All of `net`, goroutines, time. |
 | L3 | `internal/transport` | Listener / dialer abstractions for `tcp`/`ipc`/`inproc`. | wire, security, socket |
 | L4 | `internal/conn` | Connection lifecycle: drives wire+security on top of transport. | socket |
 | L5 | `socket` | Socket-type semantics, public API surface. | — |
