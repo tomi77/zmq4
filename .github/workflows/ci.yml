@@ -25,6 +25,15 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      - name: lint-guard (Frame methods must not return []byte)
+        run: |
+          count=$(grep -rn 'Frame().*\[\]byte' --include='*.go' . | grep -v '_test.go' | wc -l)
+          if [ "$count" -ne 0 ]; then
+            echo "ERROR: *Frame methods returning []byte violate the naming convention:"
+            grep -rn 'Frame().*\[\]byte' --include='*.go' . | grep -v '_test.go'
+            exit 1
+          fi
+
       - name: staticcheck
         run: |
           go install honnef.co/go/tools/cmd/staticcheck@latest
