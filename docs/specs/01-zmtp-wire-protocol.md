@@ -215,6 +215,9 @@ type Option func(*FrameReader)
 func WithMaxBodySize(n int64) Option
 
 // FrameReader reads framed messages from an io.Reader.
+// NOT safe for concurrent use — each connection must have its own FrameReader
+// driven by exactly one goroutine. Sharing a single FrameReader across
+// goroutines corrupts the read position and produces silently wrong frames.
 type FrameReader struct { /* ... */ }
 
 // NewFrameReader returns a FrameReader that reads from r.
@@ -332,9 +335,15 @@ type FrameWriter struct {
 }
 ```
 
-No goroutines, no mutexes, no timers. Concurrency safety: a single
-`FrameReader` / `FrameWriter` is used by at most one goroutine at a time
-(documented contract). Different readers/writers are independent.
+No goroutines, no mutexes, no timers.
+
+**Concurrency contract — `FrameReader` and `FrameWriter` are NOT thread-safe.**
+Each value must be owned and driven by exactly **one goroutine**. Sharing a
+single instance across goroutines corrupts the internal header buffer and the
+read cursor, producing silently wrong frames with no error. The correct
+pattern is one `FrameReader` + one `FrameWriter` per connection, each used
+exclusively by its owner goroutine. Different readers/writers are fully
+independent of each other.
 
 ## 6. Error model
 
