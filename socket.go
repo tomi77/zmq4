@@ -37,7 +37,7 @@ func (s *Socket) Recv() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return f.Body, nil
+	return append([]byte{}, f.Body...), nil
 }
 
 // RecvMsg receives a multi-part message. Each part is owned by the caller.
@@ -48,7 +48,7 @@ func (s *Socket) RecvMsg() (Message, error) {
 		if err != nil {
 			return nil, err
 		}
-		msg = append(msg, f.Body)
+		msg = append(msg, append([]byte{}, f.Body...))
 		if !f.More {
 			break
 		}
