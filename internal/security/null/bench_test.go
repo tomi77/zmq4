@@ -16,8 +16,7 @@ func BenchmarkHandshake(b *testing.B) {
 	}
 
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		s := New(md)
 		if _, err := s.Start(); err != nil {
 			b.Fatalf("Start: %v", err)
