@@ -1,6 +1,6 @@
 # 02a — NULL security mechanism (Phase 2a)
 
-> **Status:** draft, awaiting approval before implementation.
+> **Status:** implemented, frozen for F2b+.
 > **Author:** Tomasz Rup
 > **Date:** 2026-05-03
 > **Layer:** L2 — `internal/security/null`
@@ -276,15 +276,22 @@ equality. Cross-validation against libzmq is deferred to F4 interop.
 
 ### Done criteria
 
-- [ ] All unit tests pass.
-- [ ] Property test passes 1000 iterations.
-- [ ] All 4 vector tests pass.
-- [ ] `go vet ./...` clean.
-- [ ] `staticcheck ./...` clean.
-- [ ] `go test -race ./internal/security/null/...` clean.
+- [x] All unit tests pass.
+- [x] Property test passes 1000 iterations.
+- [x] All 4 vector tests pass.
+- [x] `go vet ./...` clean.
+- [x] `staticcheck ./...` clean.
+- [x] `go test -race ./internal/security/null/...` clean.
 - [ ] Zero allocations in `Start` and `Receive` happy paths beyond what
       the underlying `wire` codec already allocates (verified via
       `testing.AllocsPerRun`). `null.State` itself adds nothing on top.
+      <!-- NOT TICKED: BenchmarkHandshake reports 5 allocs/op, 136 B/op,
+      but that figure includes both wire codec allocations and null.State's
+      own copyMetadata call. No separate AllocsPerRun test isolates the
+      wire codec's per-handshake baseline, so the claim "null.State adds
+      nothing on top" cannot be verified without that baseline. The
+      benchmark documents the total budget; a targeted AllocsPerRun test
+      is deferred to F2b/F2c regression work. -->
 
 ## 9. Open questions
 
