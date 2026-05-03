@@ -122,7 +122,10 @@ func (s *State) Start() (wire.Command, error)
 //           returned error wraps a sentinel from this package (see §6).
 //
 // Receive must not be called before Start, and must not be called again
-// after done==true or after err != nil.
+// after done==true or after err != nil. Calling Receive out of order is
+// always a caller bug, never an expected interleaving — F4 must buffer
+// any peer command that arrives before our Start has been called and the
+// resulting outbound READY has been written.
 func (s *State) Receive(cmd wire.Command) (out *wire.Command, done bool, err error)
 
 // PeerMetadata returns the metadata the peer sent in its READY command.
@@ -280,8 +283,9 @@ equality. Cross-validation against libzmq is deferred to F4 interop.
 - [ ] `go vet ./...` clean.
 - [ ] `staticcheck ./...` clean.
 - [ ] `go test -race ./internal/security/null/...` clean.
-- [ ] Zero allocations in `Start` and `Receive` happy paths (verified via
-      `testing.AllocsPerRun`, modulo the metadata slice from `New`).
+- [ ] Zero allocations in `Start` and `Receive` happy paths beyond what
+      the underlying `wire` codec already allocates (verified via
+      `testing.AllocsPerRun`). `null.State` itself adds nothing on top.
 
 ## 9. Open questions
 
