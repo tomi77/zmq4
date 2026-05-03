@@ -119,6 +119,19 @@ deferred until all three concrete implementations exist (extracted in F2c).
 Each phase is gated: **the next phase does not start until the previous one
 is merged with all its tests passing.**
 
+### F1 amendments
+
+Additive changes landed after `phase-1-wire-complete` was tagged. None
+break the tagged API; they extend it. Tracked here (rather than re-tagged)
+so the original phase boundary stays intact.
+
+- `Frame.Clone() Frame` and `Command.Clone() Command` (commit `6111044`,
+  2026-05-03) — explicit deep-copy helpers to detach `Body` / `Data` from
+  the source buffer aliased by `DecodeFrame` / `ParseCommand`. `bytes.Clone`
+  semantics: `nil` body/data preserved as `nil`. Spec updated in
+  `01-zmtp-wire-protocol.md` §Frames, §Commands, §7 (buffer ownership),
+  §9.1 (test plan).
+
 ## 5. Workflow per phase
 
 For every phase:

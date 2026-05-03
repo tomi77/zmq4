@@ -301,3 +301,51 @@ func TestFrameRoundTripProperty(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestFrameCloneDetachesFromSource(t *testing.T) {
+	src := []byte{0x00, 0x05, 'h', 'e', 'l', 'l', 'o'}
+	f, n, err := DecodeFrame(src)
+	if err != nil || n != len(src) {
+		t.Fatalf("decode: err=%v n=%d", err, n)
+	}
+	clone := f.Clone()
+
+	// Mutating src must not affect the clone.
+	for i := 2; i < len(src); i++ {
+		src[i] = 'X'
+	}
+	if !bytes.Equal(clone.Body, []byte("hello")) {
+		t.Fatalf("clone.Body affected by src mutation: %q", clone.Body)
+	}
+	// The original frame, by contract, still aliases src.
+	if !bytes.Equal(f.Body, []byte("XXXXX")) {
+		t.Fatalf("original Body should alias src, got %q", f.Body)
+	}
+	// Other fields preserved.
+	if clone.Kind != f.Kind || clone.More != f.More {
+		t.Fatalf("clone metadata mismatch: %+v vs %+v", clone, f)
+	}
+}
+
+func TestFrameCloneNilBody(t *testing.T) {
+	f := Frame{Kind: FrameMessage, More: true, Body: nil}
+	clone := f.Clone()
+	if clone.Body != nil {
+		t.Fatalf("clone of nil Body should be nil, got %v (len=%d)", clone.Body, len(clone.Body))
+	}
+	if clone.Kind != f.Kind || clone.More != f.More {
+		t.Fatalf("clone metadata mismatch: %+v vs %+v", clone, f)
+	}
+}
+
+func TestFrameCloneEmptyBody(t *testing.T) {
+	// Empty (non-nil) body should clone to a non-nil empty slice — bytes.Clone preserves the distinction.
+	f := Frame{Kind: FrameMessage, Body: []byte{}}
+	clone := f.Clone()
+	if clone.Body == nil {
+		t.Fatal("clone of empty (non-nil) Body should not be nil")
+	}
+	if len(clone.Body) != 0 {
+		t.Fatalf("clone.Body should be empty, got len=%d", len(clone.Body))
+	}
+}

@@ -77,3 +77,39 @@ func TestParseCommandNonLetterName(t *testing.T) {
 		t.Fatalf("want ErrInvalidCommand, got %v", err)
 	}
 }
+
+func TestCommandCloneDetachesFromSource(t *testing.T) {
+	src := []byte{0x05, 'R', 'E', 'A', 'D', 'Y', 0xDE, 0xAD, 0xBE, 0xEF}
+	c, err := ParseCommand(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clone := c.Clone()
+
+	// Mutating src must not affect the clone's Data.
+	for i := 6; i < len(src); i++ {
+		src[i] = 0x00
+	}
+	want := []byte{0xDE, 0xAD, 0xBE, 0xEF}
+	if !bytes.Equal(clone.Data, want) {
+		t.Fatalf("clone.Data affected by src mutation: %x", clone.Data)
+	}
+	if clone.Name != c.Name {
+		t.Fatalf("clone.Name mismatch: %q vs %q", clone.Name, c.Name)
+	}
+	// Original Data, by contract, still aliases src.
+	if !bytes.Equal(c.Data, []byte{0x00, 0x00, 0x00, 0x00}) {
+		t.Fatalf("original Data should alias src, got %x", c.Data)
+	}
+}
+
+func TestCommandCloneNilData(t *testing.T) {
+	c := Command{Name: "PING", Data: nil}
+	clone := c.Clone()
+	if clone.Data != nil {
+		t.Fatalf("clone of nil Data should be nil, got %v (len=%d)", clone.Data, len(clone.Data))
+	}
+	if clone.Name != c.Name {
+		t.Fatalf("clone.Name mismatch: %q vs %q", clone.Name, c.Name)
+	}
+}

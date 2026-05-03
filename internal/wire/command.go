@@ -1,14 +1,26 @@
 package wire
 
-import "fmt"
+import (
+	"bytes"
+	"fmt"
+)
 
 // Command is a parsed command-frame body.
 //
-// Data aliases the input buffer when produced by ParseCommand; copy if
-// you retain it past the next parse call.
+// Data aliases the input buffer when produced by ParseCommand. If the
+// command is retained beyond the next ParseCommand call on the same
+// buffer, call Clone to detach Data.
 type Command struct {
 	Name string // ASCII letters only, 1..255 chars
 	Data []byte // command-specific payload
+}
+
+// Clone returns a deep copy of c with a freshly allocated Data, detaching
+// it from any source buffer aliased by ParseCommand. A nil Data is
+// preserved as nil (not converted to an empty slice).
+func (c Command) Clone() Command {
+	c.Data = bytes.Clone(c.Data)
+	return c
 }
 
 // ParseCommand parses a command body (the bytes inside a command Frame.Body).

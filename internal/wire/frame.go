@@ -1,6 +1,9 @@
 package wire
 
-import "encoding/binary"
+import (
+	"bytes"
+	"encoding/binary"
+)
 
 // FrameKind distinguishes message frames from command frames.
 type FrameKind uint8
@@ -18,13 +21,21 @@ const MaxShortBodySize = 255
 // Frame is a single ZMTP 3.1 frame.
 //
 // For decoded frames, Body aliases the source buffer (zero-copy). The
-// caller owns the buffer's lifetime — copy if you retain Body past the
-// next decode call. Streaming readers (FrameReader) always allocate a
-// fresh Body slice.
+// caller owns the buffer's lifetime. If the frame is retained beyond the
+// next DecodeFrame call on the same buffer, call Clone to detach Body.
+// Streaming readers (FrameReader) always allocate a fresh Body slice.
 type Frame struct {
 	Kind FrameKind
 	More bool   // continuation flag; must be false when Kind == FrameCommand
 	Body []byte // raw payload; for commands, see ParseCommand
+}
+
+// Clone returns a deep copy of f with a freshly allocated Body, detaching
+// it from any source buffer aliased by DecodeFrame. A nil Body is preserved
+// as nil (not converted to an empty slice).
+func (f Frame) Clone() Frame {
+	f.Body = bytes.Clone(f.Body)
+	return f
 }
 
 // WireSize returns the total on-wire size of f, including the flags byte
