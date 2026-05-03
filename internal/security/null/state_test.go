@@ -2,6 +2,7 @@ package null
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/tomi77/zmq4/internal/wire"
@@ -97,5 +98,31 @@ func TestReceivePeerReadyCompletesHandshake(t *testing.T) {
 		string(pm[0].Name) != "Socket-Type" || string(pm[0].Value) != "REP" ||
 		string(pm[1].Name) != "Identity" || string(pm[1].Value) != "peer-1" {
 		t.Fatalf("PeerMetadata = %+v, want Socket-Type=REP,Identity=peer-1", pm)
+	}
+}
+
+func TestReceiveErrorWrapsReason(t *testing.T) {
+	errCmd, err := wire.ErrorCommand{Reason: "Invalid client"}.Encode()
+	if err != nil {
+		t.Fatalf("encode ERROR: %v", err)
+	}
+
+	s := New(nil)
+	if _, err := s.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	_, done, err := s.Receive(errCmd)
+	if !errors.Is(err, ErrPeerError) {
+		t.Fatalf("Receive(ERROR) error = %v, want ErrPeerError", err)
+	}
+	if done {
+		t.Fatalf("Receive(ERROR) done=true, want false")
+	}
+	if !strings.Contains(err.Error(), "Invalid client") {
+		t.Fatalf("error %q does not include peer reason", err)
+	}
+	if s.Done() {
+		t.Fatalf("Done()=true after ERROR")
 	}
 }

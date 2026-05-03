@@ -69,6 +69,14 @@ func (s *State) Receive(cmd wire.Command) (out *wire.Command, done bool, err err
 		s.peer = copyMetadata(rc.Metadata)
 		s.received = true
 		return nil, true, nil
+	case wire.ErrorCommandName:
+		ec, perr := wire.ParseError(cmd)
+		if perr != nil {
+			s.failed = true
+			return nil, false, fmt.Errorf("%w: malformed ERROR: %v", ErrPeerError, perr)
+		}
+		s.failed = true
+		return nil, false, fmt.Errorf("%w: %s", ErrPeerError, ec.Reason)
 	}
 	s.failed = true
 	return nil, false, fmt.Errorf("%w: %q", ErrUnexpectedCommand, cmd.Name)
