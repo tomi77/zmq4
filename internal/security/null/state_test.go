@@ -62,3 +62,40 @@ func TestStartWithEmptyMetadata(t *testing.T) {
 		t.Fatalf("expected empty metadata, got %+v", rc.Metadata)
 	}
 }
+
+func TestReceivePeerReadyCompletesHandshake(t *testing.T) {
+	peerCmd, err := wire.ReadyCommand{
+		Metadata: wire.Metadata{
+			{Name: []byte("Socket-Type"), Value: []byte("REP")},
+			{Name: []byte("Identity"), Value: []byte("peer-1")},
+		},
+	}.Encode()
+	if err != nil {
+		t.Fatalf("encode peer READY: %v", err)
+	}
+
+	s := New(nil)
+	if _, err := s.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	out, done, err := s.Receive(peerCmd)
+	if err != nil {
+		t.Fatalf("Receive: %v", err)
+	}
+	if out != nil {
+		t.Fatalf("Receive returned non-nil out=%+v, want nil for NULL", out)
+	}
+	if !done {
+		t.Fatalf("Receive done=false, want true after peer READY")
+	}
+	if !s.Done() {
+		t.Fatalf("Done() = false after successful Receive")
+	}
+	pm := s.PeerMetadata()
+	if len(pm) != 2 ||
+		string(pm[0].Name) != "Socket-Type" || string(pm[0].Value) != "REP" ||
+		string(pm[1].Name) != "Identity" || string(pm[1].Value) != "peer-1" {
+		t.Fatalf("PeerMetadata = %+v, want Socket-Type=REP,Identity=peer-1", pm)
+	}
+}
