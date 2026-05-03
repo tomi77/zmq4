@@ -74,6 +74,12 @@ to interoperate with libzmq.
 
 Either peer MAY abort the handshake by sending `ERROR` instead of `READY`.
 
+A peer that stops responding (never sends `READY` and never sends `ERROR`)
+leaves the handshake in a permanently waiting state.  This state machine has
+no timer; **detecting and aborting a stalled handshake is F4's
+responsibility** (connection layer).  F4 MUST set a deadline on the
+underlying connection before driving `State.Receive` in a read loop.
+
 ## 4. Public interface
 
 All public API lives in `internal/security/null`. It has no exported

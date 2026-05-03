@@ -99,6 +99,12 @@ client ← server : READY    (metadata)         | ERROR
 Either party MAY abort at any point by sending `ERROR` with a reason. After
 `ERROR`, the connection is terminated; no further commands are exchanged.
 
+A peer that stops responding mid-handshake (e.g. never replies to
+`HELLO`) leaves the state machine waiting indefinitely.  This state machine
+has no timer; **detecting and aborting a stalled handshake is F4's
+responsibility** (connection layer).  F4 MUST set a deadline on the
+underlying connection before driving the PLAIN state machine in a read loop.
+
 Ordering is **strict**: PLAIN is a request/response chain, unlike NULL's
 full-duplex `READY`. Each side waits for the previous step before sending
 the next one.
