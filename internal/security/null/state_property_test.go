@@ -89,7 +89,7 @@ func randMetadata(rng *rand.Rand) wire.Metadata {
 	n := rng.Intn(len(names) + 1) // 0..6
 	used := map[string]bool{}
 	var md wire.Metadata
-	for i := 0; i < n; i++ {
+	for range n {
 		name := names[rng.Intn(len(names))]
 		if used[name] {
 			continue

@@ -24,7 +24,7 @@ func ParseCommand(body []byte) (Command, error) {
 	if 1+nameLen > len(body) {
 		return Command{}, fmt.Errorf("%w: name truncated (length %d, body %d)", ErrInvalidCommand, nameLen, len(body)-1)
 	}
-	for i := 0; i < nameLen; i++ {
+	for i := range nameLen {
 		if !isCommandNameChar(body[1+i]) {
 			return Command{}, fmt.Errorf("%w: non-letter byte 0x%02X in name at offset %d", ErrInvalidCommand, body[1+i], i)
 		}

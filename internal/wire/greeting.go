@@ -36,7 +36,7 @@ func EncodeGreeting(dst []byte, g Greeting) error {
 	dst[10] = 0x03
 	dst[11] = 0x01
 	// Mechanism (NUL-padded)
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		dst[12+i] = 0
 	}
 	copy(dst[12:32], g.Mechanism)
@@ -94,7 +94,7 @@ func validateMechanism(name string) error {
 // non-NUL prefix and verifies the trailing bytes are NUL-padded.
 func parseMechanism(field []byte) (string, error) {
 	end := -1
-	for i := 0; i < len(field); i++ {
+	for i := range field {
 		c := field[i]
 		if c == 0x00 {
 			end = i

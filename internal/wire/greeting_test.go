@@ -80,7 +80,7 @@ func TestDecodeGreetingUnsupportedVersion(t *testing.T) {
 		t.Fatalf("setup encode: %v", err)
 	}
 	cases := []struct {
-		name        string
+		name         string
 		major, minor byte
 	}{
 		{"3.0", 0x03, 0x00},
@@ -184,7 +184,7 @@ func TestGreetingRoundTripProperty(t *testing.T) {
 		// from the allowed set.
 		n := int(uint(seed) % 21) // 0..20 chars
 		mech := make([]byte, n)
-		for i := 0; i < n; i++ {
+		for i := range n {
 			mech[i] = allowed[uint(seed>>uint(i))%uint(len(allowed))]
 		}
 		g := Greeting{Mechanism: string(mech), AsServer: asServer}

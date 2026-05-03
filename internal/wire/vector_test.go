@@ -106,7 +106,7 @@ func TestFrameMultipartVector(t *testing.T) {
 	wantBodies := [][]byte{[]byte("part-1"), []byte("part-2"), []byte("part-3-lst")}
 	wantMore := []bool{true, true, false}
 	in := raw
-	for i := 0; i < len(wantBodies); i++ {
+	for i := range wantBodies {
 		f, n, err := DecodeFrame(in)
 		if err != nil {
 			t.Fatalf("frame %d decode: %v", i, err)

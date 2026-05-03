@@ -155,11 +155,11 @@ func TestReadyRoundTripProperty(t *testing.T) {
 		n := int(propCount) % 5 // 0..4 properties
 		md := make(Metadata, 0, n)
 		used := map[string]bool{}
-		for i := 0; i < n; i++ {
+		for i := range n {
 			// Generate a unique name 1..16 chars from allowed set.
 			nameLen := 1 + int(uint(seed>>uint(i*4))%16)
 			name := make([]byte, nameLen)
-			for j := 0; j < nameLen; j++ {
+			for j := range nameLen {
 				name[j] = allowedNameChars[uint(seed>>uint(j+i))%uint(len(allowedNameChars))]
 			}
 			// Make sure name is unique to preserve order semantics in the test.
@@ -172,7 +172,7 @@ func TestReadyRoundTripProperty(t *testing.T) {
 			// Generate a value 0..32 bytes (any byte).
 			valLen := int(uint(seed>>uint(i*7)) % 33)
 			val := make([]byte, valLen)
-			for j := 0; j < valLen; j++ {
+			for j := range valLen {
 				val[j] = byte(seed >> uint(j))
 			}
 			md = append(md, MetadataProperty{Name: name, Value: val})

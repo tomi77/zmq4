@@ -125,7 +125,7 @@ func isMetadataName(s []byte) bool {
 	if len(s) == 0 || len(s) > 255 {
 		return false
 	}
-	for i := 0; i < len(s); i++ {
+	for i := range s {
 		c := s[i]
 		switch {
 		case c >= 'A' && c <= 'Z':
@@ -145,7 +145,7 @@ func eqFoldBytes(b []byte, s string) bool {
 	if len(b) != len(s) {
 		return false
 	}
-	for i := 0; i < len(b); i++ {
+	for i := range b {
 		bc, sc := b[i], s[i]
 		if bc == sc {
 			continue
