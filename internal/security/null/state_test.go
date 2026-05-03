@@ -129,8 +129,11 @@ func TestReceiveErrorWrapsReason(t *testing.T) {
 
 func TestReceiveBeforeStart(t *testing.T) {
 	s := New(nil)
-	cmd, _ := wire.ReadyCommand{}.Encode()
-	_, _, err := s.Receive(cmd)
+	cmd, err := wire.ReadyCommand{}.Encode()
+	if err != nil {
+		t.Fatalf("encode READY: %v", err)
+	}
+	_, _, err = s.Receive(cmd)
 	if !errors.Is(err, ErrNotStarted) {
 		t.Fatalf("Receive before Start = %v, want ErrNotStarted", err)
 	}
@@ -165,7 +168,10 @@ func TestReceiveUnexpectedCommand(t *testing.T) {
 }
 
 func TestReceiveAfterDone(t *testing.T) {
-	peerCmd, _ := wire.ReadyCommand{}.Encode()
+	peerCmd, err := wire.ReadyCommand{}.Encode()
+	if err != nil {
+		t.Fatalf("encode READY: %v", err)
+	}
 	s := New(nil)
 	if _, err := s.Start(); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -173,9 +179,36 @@ func TestReceiveAfterDone(t *testing.T) {
 	if _, _, err := s.Receive(peerCmd); err != nil {
 		t.Fatalf("first Receive: %v", err)
 	}
-	_, _, err := s.Receive(peerCmd)
+	_, _, err = s.Receive(peerCmd)
 	if !errors.Is(err, ErrAlreadyDone) {
 		t.Fatalf("second Receive = %v, want ErrAlreadyDone", err)
+	}
+	// Pin the side-effect: the duplicate Receive sets s.failed, so any
+	// subsequent call now returns ErrAlreadyFailed.
+	if _, err := s.Start(); !errors.Is(err, ErrAlreadyFailed) {
+		t.Fatalf("Start after AlreadyDone = %v, want ErrAlreadyFailed", err)
+	}
+}
+
+// TestStartAfterSuccessfulDone verifies that Start on a successfully
+// completed (but not misused) state machine returns ErrAlreadyStarted,
+// not ErrAlreadyFailed. DONE is a terminal success state until misuse
+// transitions it to FAILED.
+func TestStartAfterSuccessfulDone(t *testing.T) {
+	peerCmd, err := wire.ReadyCommand{}.Encode()
+	if err != nil {
+		t.Fatalf("encode READY: %v", err)
+	}
+	s := New(nil)
+	if _, err := s.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if _, _, err := s.Receive(peerCmd); err != nil {
+		t.Fatalf("Receive: %v", err)
+	}
+	_, err = s.Start()
+	if !errors.Is(err, ErrAlreadyStarted) {
+		t.Fatalf("Start after Done = %v, want ErrAlreadyStarted", err)
 	}
 }
 
