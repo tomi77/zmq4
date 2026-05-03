@@ -240,3 +240,42 @@ func TestStartAfterFailedReturnsAlreadyFailed(t *testing.T) {
 		t.Fatalf("Start after failure = %v, want ErrAlreadyFailed", err)
 	}
 }
+
+// TestPeerMetadataIndependentOfInputBuffer verifies that PeerMetadata
+// survives the caller mutating (or freeing) the buffer that backed the
+// Receive input. F4 will read frames into reusable buffers; null.State
+// must not retain pointers into them.
+func TestPeerMetadataIndependentOfInputBuffer(t *testing.T) {
+	original, err := wire.ReadyCommand{
+		Metadata: wire.Metadata{
+			{Name: []byte("Socket-Type"), Value: []byte("DEALER")},
+		},
+	}.Encode()
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	// Copy into a buffer we own and can clobber afterwards.
+	buf := make([]byte, len(original.Data))
+	copy(buf, original.Data)
+	peerCmd := wire.Command{Name: original.Name, Data: buf}
+
+	s := New(nil)
+	if _, err := s.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if _, _, err := s.Receive(peerCmd); err != nil {
+		t.Fatalf("Receive: %v", err)
+	}
+
+	// Clobber the input buffer.
+	for i := range buf {
+		buf[i] = 0xFF
+	}
+
+	pm := s.PeerMetadata()
+	if len(pm) != 1 ||
+		string(pm[0].Name) != "Socket-Type" ||
+		string(pm[0].Value) != "DEALER" {
+		t.Fatalf("PeerMetadata after buffer clobber = %+v, want Socket-Type=DEALER", pm)
+	}
+}
