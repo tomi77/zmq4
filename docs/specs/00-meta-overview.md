@@ -1,7 +1,9 @@
 # 00 — Meta-overview
 
 > **Status:** living document. F1 and F2a complete and tagged
-> (`phase-1-wire-complete`, `phase-2a-null-complete`); later phases pending.
+> (`phase-1-wire-complete`, `phase-2a-null-complete`); F2b spec drafted
+> (`docs/specs/02b-security-plain.md`), implementation pending; later
+> phases pending.
 > **Author:** Tomasz Rup
 > **Date:** 2026-05-02 (last updated 2026-05-03)
 
@@ -105,7 +107,7 @@ deferred until all three concrete implementations exist (extracted in F2c).
 |-------|------|-------|-------------------|--------|
 | F1 | `01-zmtp-wire-protocol.md` | ZMTP 3.1: greeting, frames, multipart, traffic commands. **No I/O.** | Property + vector tests; vectors hand-crafted from RFC 23 ABNF using our own encoder. libzmq cross-validation deferred to F4 interop. | **Complete** — tagged `phase-1-wire-complete`. |
 | F2a | `02a-security-null.md` | NULL handshake state machine. **No I/O.** | Unit + property + vector tests; vectors hand-crafted from RFC 37 §3 using F1's encoder. libzmq cross-validation deferred to F4 interop. | **Complete** — tagged `phase-2a-null-complete`. |
-| F2b | `02b-security-plain.md` | PLAIN handshake state machine. **No I/O.** | Same shape as F2a. | Pending. |
+| F2b | `02b-security-plain.md` | PLAIN handshake state machine. **No I/O.** Asymmetric: `ClientState` + `ServerState`; server uses an `Authenticator` callback (ZAP integration deferred to F6). Promotes `wire.ParseMetadata` / `wire.EncodeMetadata` to public L1 (additive). | Same shape as F2a. | Spec drafted; implementation pending. |
 | F2c | `02c-security-curve.md` | CURVE handshake state machine. **No I/O.** Extracts the shared `Mechanism` interface across F2a/F2b/F2c. | Same shape as F2a, plus crypto vectors. | Pending. |
 | F3 | `03-transports.md` | `tcp`, `ipc`, `inproc` listener/dialer abstractions. | Self-loopback tests (our dialer ↔ our listener). | Pending. |
 | F4 | `04-connection-layer.md` | Wire-up of F1+F2+F3. Handshake, frame stream, error handling. | **First live interop with `libzmq`** (NULL handshake, then PLAIN, then CURVE). | Pending. |

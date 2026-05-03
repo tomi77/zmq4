@@ -2,10 +2,17 @@
 
 > **Status:** implemented, frozen for F2+.
 > **Author:** Tomasz Rup
-> **Date:** 2026-05-02
+> **Date:** 2026-05-02 (last updated 2026-05-03)
 > **Layer:** L1 — `internal/wire`
 > **Depends on:** nothing.
 > **Consumed by:** F2 (security), F4 (connection), F5 (sockets).
+>
+> **F2b note (2026-05-03):** the existing internal helpers `parseMetadata`
+> and `encodeMetadata` (used by `ReadyCommand`) are promoted to public API
+> as `wire.ParseMetadata` / `wire.EncodeMetadata` so that
+> `internal/security/plain` can encode/decode `INITIATE` (which carries
+> the same metadata format as `READY`). This is **additive** — no existing
+> F1 type, function, or behavior changes. F1's frozen surface is preserved.
 
 ## 1. Summary
 
@@ -165,7 +172,8 @@ const (
 //
 // For decoded frames, Body aliases the source buffer for zero-copy. The
 // caller owns the buffer's lifetime. Streaming readers (FrameReader) always
-// allocate a fresh Body.
+// allocate a fresh Body. If the frame is retained beyond the next DecodeFrame
+// call on the same buffer, call Clone to detach Body.
 type Frame struct {
     Kind FrameKind
     More bool   // continuation flag; must be false when Kind == FrameCommand
@@ -177,6 +185,11 @@ const MaxShortBodySize = 255
 
 // WireSize returns the total on-wire size of f, including flags and size fields.
 func (f Frame) WireSize() int
+
+// Clone returns a deep copy of f with a freshly allocated Body, detaching it
+// from any source buffer aliased by DecodeFrame. Cloning a Frame with a nil
+// Body returns a Frame with a nil Body (not an empty slice).
+func (f Frame) Clone() Frame
 
 // EncodeFrame writes f's wire representation into dst.
 // Returns ErrShortBuffer if len(dst) < f.WireSize().
@@ -211,10 +224,19 @@ func (fw *FrameWriter) WriteFrame(f Frame) error
 // ---------- Commands ----------
 
 // Command is a parsed command frame body.
+//
+// Data aliases the caller's buffer for zero-copy. If the command is retained
+// beyond the next ParseCommand call on the same buffer, call Clone to detach
+// Data.
 type Command struct {
     Name string // ASCII letters only, 1..255 chars
     Data []byte // command-specific payload; aliases caller buffer for zero-copy
 }
+
+// Clone returns a deep copy of c with a freshly allocated Data, detaching it
+// from any source buffer aliased by ParseCommand. Cloning a Command with a
+// nil Data returns a Command with a nil Data (not an empty slice).
+func (c Command) Clone() Command
 
 // ParseCommand parses a command body (the bytes inside a command Frame.Body).
 // Returns ErrInvalidCommand if the name length is invalid or contains
@@ -331,14 +353,16 @@ fmt.Errorf("%w: got 0x%02X 0x%02X, want 0xFF...0x7F", ErrInvalidSignature, src[0
 | Function | Returned slice | Caller must... |
 |----------|----------------|----------------|
 | `DecodeGreeting` | n/a (returns struct of strings/bools) | — |
-| `DecodeFrame` | `Frame.Body` aliases `src` | copy if retained beyond next decode |
+| `DecodeFrame` | `Frame.Body` aliases `src` | call `Frame.Clone` if retained beyond next decode |
 | `FrameReader.ReadFrame` | `Frame.Body` is freshly allocated | — |
-| `ParseCommand` | `Command.Data` aliases input | copy if retained beyond next parse |
+| `ParseCommand` | `Command.Data` aliases input | call `Command.Clone` if retained beyond next parse |
 | `ParseReady` etc. | `Metadata` value slices alias input | copy if retained |
 
 This is the same convention as `bufio.Scanner` and is documented per
 function. F4 (connection layer) is where the trade-off is decided per call
-site (it knows whether the underlying buffer outlives the frame).
+site (it knows whether the underlying buffer outlives the frame). `Clone`
+gives that decision a single, greppable call site instead of ad-hoc
+`append([]byte(nil), body...)` scattered across higher layers.
 
 ## 8. State machines
 
@@ -363,6 +387,10 @@ Per-component round-trip and edge-case tests, in
   decode same.
 - **Commands**: round-trip for every standard command; invalid name
   characters; zero-length name; oversized name.
+- **Clone**: after `DecodeFrame(src)` and then `Frame.Clone`, mutating
+  `src` must not affect the cloned `Body`; same for `Command.Clone` after
+  `ParseCommand`. Cloning a frame/command with `nil` body returns `nil`
+  body (not `[]byte{}`); equality otherwise preserved.
 - **READY metadata**: empty metadata; one property; multiple properties;
   property with binary value containing `0x00` and `0xFF`; property name
   with allowed punctuation (`-_.+`).
