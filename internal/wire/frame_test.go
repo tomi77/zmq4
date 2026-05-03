@@ -349,3 +349,14 @@ func TestFrameCloneEmptyBody(t *testing.T) {
 		t.Fatalf("clone.Body should be empty, got len=%d", len(clone.Body))
 	}
 }
+
+func TestDecodeFrameTooLarge(t *testing.T) {
+	// Long-frame header that claims exactly MaxFrameBodySize+1 bytes — must be
+	// rejected before any allocation attempt.
+	var buf [9]byte
+	buf[0] = 0x02 // long message, no MORE
+	binary.BigEndian.PutUint64(buf[1:], MaxFrameBodySize+1)
+	if _, _, err := DecodeFrame(buf[:]); !errors.Is(err, ErrFrameTooLarge) {
+		t.Fatalf("want ErrFrameTooLarge, got %v", err)
+	}
+}

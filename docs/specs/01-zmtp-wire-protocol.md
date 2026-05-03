@@ -183,6 +183,11 @@ type Frame struct {
 // MaxShortBodySize is the largest body that can use the short-size encoding.
 const MaxShortBodySize = 255
 
+// MaxFrameBodySize is the upper bound on a single frame body accepted by
+// ReadFrame and DecodeFrame. Frames claiming a larger body are rejected with
+// ErrFrameTooLarge before any allocation is attempted. Default: 32 MiB.
+const MaxFrameBodySize = 32 << 20
+
 // WireSize returns the total on-wire size of f, including flags and size fields.
 func (f Frame) WireSize() int
 
@@ -202,14 +207,24 @@ func EncodeFrame(dst []byte, f Frame) (int, error)
 // On error other than ErrShortBuffer, the second return value is 0.
 func DecodeFrame(src []byte) (Frame, int, error)
 
+// Option configures a FrameReader.
+type Option func(*FrameReader)
+
+// WithMaxBodySize sets the maximum frame body size accepted by ReadFrame.
+// Panics if n <= 0.
+func WithMaxBodySize(n int64) Option
+
 // FrameReader reads framed messages from an io.Reader.
 type FrameReader struct { /* ... */ }
 
-func NewFrameReader(r io.Reader) *FrameReader
+// NewFrameReader returns a FrameReader that reads from r.
+// Without options the body size limit is MaxFrameBodySize (32 MiB).
+func NewFrameReader(r io.Reader, opts ...Option) *FrameReader
 
 // ReadFrame reads the next frame, allocating a fresh Body slice.
 // Returns io.EOF only when the stream cleanly ends between frames.
 // Returns io.ErrUnexpectedEOF if a frame is truncated mid-read.
+// Returns ErrFrameTooLarge if the claimed body size exceeds the limit.
 func (fr *FrameReader) ReadFrame() (Frame, error)
 
 // FrameWriter writes framed messages to an io.Writer.
@@ -306,8 +321,9 @@ avoid allocating on every read/write of size headers.
 
 ```go
 type FrameReader struct {
-    r      io.Reader
-    header [9]byte // 1 flag + up to 8 size bytes
+    r           io.Reader
+    header      [9]byte // 1 flag + up to 8 size bytes
+    maxBodySize int64   // default MaxFrameBodySize; overridden via WithMaxBodySize
 }
 
 type FrameWriter struct {
@@ -333,7 +349,7 @@ var (
     ErrReservedFlags      = errors.New("zmq4/wire: frame uses reserved flag bits")
     ErrCommandHasMore     = errors.New("zmq4/wire: command frame has MORE flag set")
     ErrInvalidCommand     = errors.New("zmq4/wire: malformed command")
-    ErrFrameTooLarge      = errors.New("zmq4/wire: frame size exceeds 2^63-1")
+    ErrFrameTooLarge      = errors.New("zmq4/wire: frame body exceeds MaxFrameBodySize")
 )
 ```
 
@@ -382,7 +398,9 @@ Per-component round-trip and edge-case tests, in
 - **Frame**: round-trip for every flag combination (`0x00..0x06`).
   Boundary sizes: 0, 1, 254, 255 (boundary short/long), 256, 65535,
   16 MiB. Reject: reserved bits 3..7 set, flags `0x05`, flags `0x07`,
-  truncated short frame, truncated long frame.
+  truncated short frame, truncated long frame, claimed body >
+  `MaxFrameBodySize` (`ErrFrameTooLarge`) in both `DecodeFrame` and
+  `FrameReader.ReadFrame`.
 - **Multipart**: encode `[Frame{More:true}, Frame{More:true}, Frame{More:false}]`,
   decode same.
 - **Commands**: round-trip for every standard command; invalid name

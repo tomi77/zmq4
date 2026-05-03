@@ -5,15 +5,36 @@ import (
 	"io"
 )
 
+// Option configures a FrameReader.
+type Option func(*FrameReader)
+
+// WithMaxBodySize sets the maximum frame body size accepted by ReadFrame.
+// Frames claiming a larger body are rejected with ErrFrameTooLarge before any
+// allocation. Panics if n <= 0.
+func WithMaxBodySize(n int64) Option {
+	if n <= 0 {
+		panic("wire: WithMaxBodySize: n must be positive")
+	}
+	return func(fr *FrameReader) { fr.maxBodySize = n }
+}
+
 // FrameReader reads ZMTP 3.1 frames from an io.Reader. Each ReadFrame
 // allocates a fresh Body slice. Not safe for concurrent use.
 type FrameReader struct {
-	r      io.Reader
-	header [9]byte
+	r           io.Reader
+	header      [9]byte
+	maxBodySize int64
 }
 
-// NewFrameReader returns a FrameReader that reads from r.
-func NewFrameReader(r io.Reader) *FrameReader { return &FrameReader{r: r} }
+// NewFrameReader returns a FrameReader that reads from r. Without options the
+// body size limit is MaxFrameBodySize.
+func NewFrameReader(r io.Reader, opts ...Option) *FrameReader {
+	fr := &FrameReader{r: r, maxBodySize: MaxFrameBodySize}
+	for _, o := range opts {
+		o(fr)
+	}
+	return fr
+}
 
 // ReadFrame reads the next frame from the underlying reader. Returns
 // io.EOF only when the stream cleanly ends between frames; a truncated
@@ -47,6 +68,9 @@ func (fr *FrameReader) ReadFrame() (Frame, error) {
 		size = uint64(fr.header[0])
 	}
 
+	if size > uint64(fr.maxBodySize) {
+		return Frame{}, ErrFrameTooLarge
+	}
 	body := make([]byte, size)
 	if size > 0 {
 		if _, err := io.ReadFull(fr.r, body); err != nil {

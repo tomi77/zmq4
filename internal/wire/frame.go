@@ -18,6 +18,11 @@ const (
 // MaxShortBodySize is the largest body that can use the short-size encoding.
 const MaxShortBodySize = 255
 
+// MaxFrameBodySize is the upper bound on a single frame body accepted by
+// ReadFrame and DecodeFrame. Frames claiming a larger size are rejected with
+// ErrFrameTooLarge before any allocation is attempted.
+const MaxFrameBodySize = 32 << 20 // 32 MiB
+
 // Frame is a single ZMTP 3.1 frame.
 //
 // For decoded frames, Body aliases the source buffer (zero-copy). The
@@ -117,6 +122,9 @@ func DecodeFrame(src []byte) (Frame, int, error) {
 		off++
 	}
 
+	if size > MaxFrameBodySize {
+		return Frame{}, 0, ErrFrameTooLarge
+	}
 	if uint64(len(src)-off) < size {
 		return Frame{}, 0, ErrShortBuffer
 	}

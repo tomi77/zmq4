@@ -2,6 +2,7 @@ package wire
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"io"
 	"testing"
@@ -77,6 +78,51 @@ func TestFrameReaderReservedFlags(t *testing.T) {
 	fr := NewFrameReader(bytes.NewReader(bad))
 	if _, err := fr.ReadFrame(); !errors.Is(err, ErrReservedFlags) {
 		t.Fatalf("want ErrReservedFlags, got %v", err)
+	}
+}
+
+func TestFrameReaderTooLarge(t *testing.T) {
+	// Long-frame header claiming MaxFrameBodySize+1 bytes — ReadFrame must
+	// return ErrFrameTooLarge without allocating.
+	var buf [9]byte
+	buf[0] = 0x02 // long message, no MORE
+	binary.BigEndian.PutUint64(buf[1:], MaxFrameBodySize+1)
+	fr := NewFrameReader(bytes.NewReader(buf[:]))
+	if _, err := fr.ReadFrame(); !errors.Is(err, ErrFrameTooLarge) {
+		t.Fatalf("want ErrFrameTooLarge, got %v", err)
+	}
+}
+
+func TestFrameReaderCustomMaxBodySize(t *testing.T) {
+	const limit = 64
+
+	// Frame within the custom limit — must succeed.
+	okFrame := Frame{Kind: FrameMessage, Body: bytes.Repeat([]byte{0x42}, limit)}
+	var buf bytes.Buffer
+	scratch := make([]byte, okFrame.WireSize())
+	if _, err := EncodeFrame(scratch, okFrame); err != nil {
+		t.Fatal(err)
+	}
+	buf.Write(scratch)
+
+	fr := NewFrameReader(&buf, WithMaxBodySize(limit))
+	got, err := fr.ReadFrame()
+	if err != nil {
+		t.Fatalf("expected success for body == limit, got %v", err)
+	}
+	if !bytes.Equal(got.Body, okFrame.Body) {
+		t.Fatal("body mismatch")
+	}
+
+	// Frame one byte over the custom limit — must be rejected.
+	overFrame := Frame{Kind: FrameMessage, Body: bytes.Repeat([]byte{0x42}, limit+1)}
+	scratch = make([]byte, overFrame.WireSize())
+	if _, err := EncodeFrame(scratch, overFrame); err != nil {
+		t.Fatal(err)
+	}
+	fr2 := NewFrameReader(bytes.NewReader(scratch), WithMaxBodySize(limit))
+	if _, err := fr2.ReadFrame(); !errors.Is(err, ErrFrameTooLarge) {
+		t.Fatalf("want ErrFrameTooLarge for body == limit+1, got %v", err)
 	}
 }
 

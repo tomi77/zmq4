@@ -34,6 +34,6 @@ var (
 	// length, non-letter chars in name, etc.).
 	ErrInvalidCommand = errors.New("zmq4/wire: malformed command")
 
-	// ErrFrameTooLarge indicates a frame size exceeds 2^63-1 octets.
-	ErrFrameTooLarge = errors.New("zmq4/wire: frame size exceeds 2^63-1")
+	// ErrFrameTooLarge indicates a frame body size exceeds MaxFrameBodySize.
+	ErrFrameTooLarge = errors.New("zmq4/wire: frame body exceeds MaxFrameBodySize")
 )
