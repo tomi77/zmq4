@@ -374,6 +374,27 @@ the sentinel and append the offending bytes when it helps:
 fmt.Errorf("%w: got 0x%02X 0x%02X, want 0xFF...0x7F", ErrInvalidSignature, src[0], src[9])
 ```
 
+### 6.1 Framing errors are fatal — no resynchronization
+
+Any error returned by `FrameReader.ReadFrame` or `DecodeFrame` that
+indicates a **protocol violation** (`ErrReservedFlags`, `ErrCommandHasMore`,
+`ErrFrameTooLarge`, `ErrInvalidSignature`, `ErrUnsupportedVersion`,
+`ErrInvalidMechanism`) leaves the stream in an **unknown position**.
+ZMTP 3.1 provides no in-band resynchronization marker; the framing boundary
+cannot be recovered without cooperation from the peer.
+
+The caller (F4 — connection layer) **must close the underlying connection**
+immediately after receiving any such error. Attempting to read the next frame
+after a framing error is undefined behavior and will produce garbage or
+block indefinitely.
+
+I/O errors (`io.EOF`, `io.ErrUnexpectedEOF`, net errors) are pass-through;
+the caller should close the connection and surface the error normally.
+Transient I/O errors that the transport layer retries internally (e.g. a
+buffered reader that masks a single EAGAIN) do not advance the frame cursor,
+so sync is preserved — but this is a property of the underlying reader, not
+of `FrameReader` itself.
+
 ## 7. Buffer ownership
 
 | Function | Returned slice | Caller must... |
