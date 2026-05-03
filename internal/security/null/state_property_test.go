@@ -34,28 +34,40 @@ func TestNullHandshakeProperty(t *testing.T) {
 			return false
 		}
 
-		// Order chosen by seed: 0=A receives first, 1=B receives first.
+		// Ordering chosen by rng: 0=A receives first, 1=B receives first.
 		if rng.Intn(2) == 0 {
 			if _, _, err := a.Receive(cmdB); err != nil {
+				t.Logf("seed=%d a.Receive: %v", seed, err)
 				return false
 			}
 			if _, _, err := b.Receive(cmdA); err != nil {
+				t.Logf("seed=%d b.Receive: %v", seed, err)
 				return false
 			}
 		} else {
 			if _, _, err := b.Receive(cmdA); err != nil {
+				t.Logf("seed=%d b.Receive: %v", seed, err)
 				return false
 			}
 			if _, _, err := a.Receive(cmdB); err != nil {
+				t.Logf("seed=%d a.Receive: %v", seed, err)
 				return false
 			}
 		}
 
 		if !a.Done() || !b.Done() {
+			t.Logf("seed=%d a.Done=%v b.Done=%v", seed, a.Done(), b.Done())
 			return false
 		}
-		return metadataEqual(a.PeerMetadata(), mdB) &&
-			metadataEqual(b.PeerMetadata(), mdA)
+		if !metadataEqual(a.PeerMetadata(), mdB) {
+			t.Logf("seed=%d a.PeerMetadata != mdB", seed)
+			return false
+		}
+		if !metadataEqual(b.PeerMetadata(), mdA) {
+			t.Logf("seed=%d b.PeerMetadata != mdA", seed)
+			return false
+		}
+		return true
 	}
 
 	if err := quick.Check(prop, cfg); err != nil {
@@ -63,9 +75,12 @@ func TestNullHandshakeProperty(t *testing.T) {
 	}
 }
 
-// randMetadata produces a deterministic random Metadata of size 0..6
-// with property names from a small allowlist (so we don't violate
-// isMetadataName) and value byte-blobs of length 0..32.
+// randMetadata produces a deterministic random Metadata of up to 6
+// properties, with property names from a small allowlist (so we don't
+// violate isMetadataName) and value byte-blobs of length 0..32. The
+// size distribution is biased toward smaller sets because it makes n
+// random picks with deduplication; the actual property count may be
+// less than n on collision (full 6-property metadata is rare).
 func randMetadata(rng *rand.Rand) wire.Metadata {
 	names := []string{
 		"Socket-Type", "Identity", "Resource",
@@ -82,7 +97,9 @@ func randMetadata(rng *rand.Rand) wire.Metadata {
 		used[name] = true
 		valLen := rng.Intn(33)
 		val := make([]byte, valLen)
-		rng.Read(val)
+		for j := range val {
+			val[j] = byte(rng.Intn(256))
+		}
 		md = append(md, wire.MetadataProperty{
 			Name:  []byte(name),
 			Value: val,
