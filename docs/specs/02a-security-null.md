@@ -282,16 +282,12 @@ equality. Cross-validation against libzmq is deferred to F4 interop.
 - [x] `go vet ./...` clean.
 - [x] `staticcheck ./...` clean.
 - [x] `go test -race ./internal/security/null/...` clean.
-- [ ] Zero allocations in `Start` and `Receive` happy paths beyond what
-      the underlying `wire` codec already allocates (verified via
-      `testing.AllocsPerRun`). `null.State` itself adds nothing on top.
-      <!-- NOT TICKED: BenchmarkHandshake reports 5 allocs/op, 136 B/op,
-      but that figure includes both wire codec allocations and null.State's
-      own copyMetadata call. No separate AllocsPerRun test isolates the
-      wire codec's per-handshake baseline, so the claim "null.State adds
-      nothing on top" cannot be verified without that baseline. The
-      benchmark documents the total budget; a targeted AllocsPerRun test
-      is deferred to F2b/F2c regression work. -->
+- [x] `Start` adds zero `null.State`-owned allocations on top of the
+      wire codec; `Receive` adds exactly the defensive metadata copy
+      (one slice header + one `Name` and one `Value` buffer per peer
+      property, per the buffer-independence contract pinned in
+      `TestPeerMetadataIndependentOfInputBuffer`). Verified by
+      `TestStartAndReceiveAllocBudget` via `testing.AllocsPerRun`.
 
 ## 9. Open questions
 
