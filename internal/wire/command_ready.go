@@ -3,7 +3,6 @@ package wire
 import (
 	"encoding/binary"
 	"fmt"
-	"strings"
 )
 
 // ReadyCommandName is the wire name for the READY command.
@@ -19,9 +18,14 @@ type ReadyCommand struct {
 type Metadata []MetadataProperty
 
 // MetadataProperty is one name/value pair.
+//
+// When produced by ParseReady, both Name and Value alias the input
+// buffer (zero-copy). Copy them if you retain the property past the
+// next parse call.
 type MetadataProperty struct {
-	// Name: 1..255 chars from [A-Z a-z 0-9 - _ . +]. Case-insensitive on lookup.
-	Name string
+	// Name: 1..255 chars from [A-Z a-z 0-9 - _ . +]. Compared
+	// case-insensitively via Metadata.Get.
+	Name []byte
 	// Value: 0..2^32-1 bytes, opaque.
 	Value []byte
 }
@@ -30,7 +34,7 @@ type MetadataProperty struct {
 // (case-insensitive ASCII) and a boolean indicating presence.
 func (m Metadata) Get(name string) ([]byte, bool) {
 	for _, p := range m {
-		if strings.EqualFold(p.Name, name) {
+		if eqFoldBytes(p.Name, name) {
 			return p.Value, true
 		}
 	}
@@ -50,18 +54,23 @@ func ParseReady(cmd Command) (ReadyCommand, error) {
 }
 
 // Encode returns the Command form of rc, suitable for embedding in a
-// FrameCommand body via EncodeCommand.
-func (rc ReadyCommand) Encode() Command {
-	data := encodeMetadata(rc.Metadata)
-	return Command{Name: ReadyCommandName, Data: data}
+// FrameCommand body via EncodeCommand. Returns ErrInvalidCommand if any
+// property has an invalid name or a value exceeding 2^32-1 bytes.
+func (rc ReadyCommand) Encode() (Command, error) {
+	for _, p := range rc.Metadata {
+		if !isMetadataName(p.Name) {
+			return Command{}, fmt.Errorf("%w: invalid metadata name %q", ErrInvalidCommand, p.Name)
+		}
+		if uint64(len(p.Value)) > 0xFFFFFFFF {
+			return Command{}, fmt.Errorf("%w: metadata value too large (%d > 2^32-1)", ErrInvalidCommand, len(p.Value))
+		}
+	}
+	return Command{Name: ReadyCommandName, Data: encodeMetadata(rc.Metadata)}, nil
 }
 
 func parseMetadata(data []byte) (Metadata, error) {
 	var out Metadata
 	for off := 0; off < len(data); {
-		if off+1 > len(data) {
-			return nil, fmt.Errorf("%w: metadata truncated at name-size", ErrInvalidCommand)
-		}
 		nameLen := int(data[off])
 		off++
 		if nameLen == 0 {
@@ -70,7 +79,7 @@ func parseMetadata(data []byte) (Metadata, error) {
 		if off+nameLen > len(data) {
 			return nil, fmt.Errorf("%w: metadata name truncated", ErrInvalidCommand)
 		}
-		name := string(data[off : off+nameLen])
+		name := data[off : off+nameLen]
 		off += nameLen
 		if !isMetadataName(name) {
 			return nil, fmt.Errorf("%w: invalid metadata name %q", ErrInvalidCommand, name)
@@ -80,11 +89,14 @@ func parseMetadata(data []byte) (Metadata, error) {
 		}
 		valSize := binary.BigEndian.Uint32(data[off : off+4])
 		off += 4
-		if off+int(valSize) > len(data) {
+		// Compare in uint64 so a valSize > 2^31-1 can't wrap to a
+		// negative int on 32-bit platforms and slip past the bound check.
+		if uint64(valSize) > uint64(len(data)-off) {
 			return nil, fmt.Errorf("%w: metadata value truncated", ErrInvalidCommand)
 		}
-		out = append(out, MetadataProperty{Name: name, Value: data[off : off+int(valSize)]})
-		off += int(valSize)
+		end := off + int(valSize)
+		out = append(out, MetadataProperty{Name: name, Value: data[off:end]})
+		off = end
 	}
 	return out, nil
 }
@@ -109,7 +121,7 @@ func encodeMetadata(md Metadata) []byte {
 	return out
 }
 
-func isMetadataName(s string) bool {
+func isMetadataName(s []byte) bool {
 	if len(s) == 0 || len(s) > 255 {
 		return false
 	}
@@ -121,6 +133,30 @@ func isMetadataName(s string) bool {
 		case c >= '0' && c <= '9':
 		case c == '-' || c == '_' || c == '.' || c == '+':
 		default:
+			return false
+		}
+	}
+	return true
+}
+
+// eqFoldBytes reports whether b equals s under ASCII case folding,
+// without allocating a string from b.
+func eqFoldBytes(b []byte, s string) bool {
+	if len(b) != len(s) {
+		return false
+	}
+	for i := 0; i < len(b); i++ {
+		bc, sc := b[i], s[i]
+		if bc == sc {
+			continue
+		}
+		if 'A' <= bc && bc <= 'Z' {
+			bc += 'a' - 'A'
+		}
+		if 'A' <= sc && sc <= 'Z' {
+			sc += 'a' - 'A'
+		}
+		if bc != sc {
 			return false
 		}
 	}

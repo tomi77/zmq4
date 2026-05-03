@@ -18,6 +18,11 @@ var (
 	// (oversized, contains disallowed characters, or not NUL-padded).
 	ErrInvalidMechanism = errors.New("zmq4/wire: invalid mechanism field")
 
+	// ErrInvalidGreeting indicates a greeting field other than the
+	// signature, version, or mechanism is malformed (e.g. as-server byte
+	// outside {0x00, 0x01}).
+	ErrInvalidGreeting = errors.New("zmq4/wire: invalid greeting field")
+
 	// ErrReservedFlags indicates a frame's flags byte sets reserved bits 3..7.
 	ErrReservedFlags = errors.New("zmq4/wire: frame uses reserved flag bits")
 

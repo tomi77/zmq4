@@ -14,7 +14,10 @@ func TestErrorEncodeDecodeRoundTrip(t *testing.T) {
 		{Reason: strings.Repeat("X", 255)},
 	}
 	for _, ec := range cases {
-		cmd := ec.Encode()
+		cmd, err := ec.Encode()
+		if err != nil {
+			t.Fatalf("encode %q: %v", ec.Reason, err)
+		}
 		got, err := ParseError(cmd)
 		if err != nil {
 			t.Fatalf("%q: %v", ec.Reason, err)
@@ -26,12 +29,9 @@ func TestErrorEncodeDecodeRoundTrip(t *testing.T) {
 }
 
 func TestErrorEncodeOversized(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic on oversized reason")
-		}
-	}()
-	_ = ErrorCommand{Reason: strings.Repeat("X", 256)}.Encode()
+	if _, err := (ErrorCommand{Reason: strings.Repeat("X", 256)}).Encode(); !errors.Is(err, ErrInvalidCommand) {
+		t.Fatalf("want ErrInvalidCommand, got %v", err)
+	}
 }
 
 func TestParseErrorMalformed(t *testing.T) {
@@ -67,7 +67,10 @@ func TestParseErrorWrongName(t *testing.T) {
 
 func TestErrorEncodeWireBytes(t *testing.T) {
 	ec := ErrorCommand{Reason: "X"}
-	cmd := ec.Encode()
+	cmd, err := ec.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !bytes.Equal(cmd.Data, []byte{0x01, 'X'}) {
 		t.Fatalf("got %x, want %x", cmd.Data, []byte{0x01, 'X'})
 	}

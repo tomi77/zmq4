@@ -43,15 +43,16 @@ func ParsePing(cmd Command) (PingCommand, error) {
 	}, nil
 }
 
-// Encode produces the Command form. Panics if Context > 16 bytes.
-func (pc PingCommand) Encode() Command {
+// Encode produces the Command form. Returns ErrInvalidCommand if
+// Context exceeds 16 bytes.
+func (pc PingCommand) Encode() (Command, error) {
 	if len(pc.Context) > PingContextMaxSize {
-		panic("wire: PingCommand.Context exceeds 16 bytes")
+		return Command{}, fmt.Errorf("%w: PING context %d > %d", ErrInvalidCommand, len(pc.Context), PingContextMaxSize)
 	}
 	data := make([]byte, 2+len(pc.Context))
 	binary.BigEndian.PutUint16(data[:2], pc.TTL)
 	copy(data[2:], pc.Context)
-	return Command{Name: PingCommandName, Data: data}
+	return Command{Name: PingCommandName, Data: data}, nil
 }
 
 // ParsePong parses cmd as a PONG body.
@@ -65,10 +66,11 @@ func ParsePong(cmd Command) (PongCommand, error) {
 	return PongCommand{Context: cmd.Data}, nil
 }
 
-// Encode produces the Command form. Panics if Context > 16 bytes.
-func (pc PongCommand) Encode() Command {
+// Encode produces the Command form. Returns ErrInvalidCommand if
+// Context exceeds 16 bytes.
+func (pc PongCommand) Encode() (Command, error) {
 	if len(pc.Context) > PingContextMaxSize {
-		panic("wire: PongCommand.Context exceeds 16 bytes")
+		return Command{}, fmt.Errorf("%w: PONG context %d > %d", ErrInvalidCommand, len(pc.Context), PingContextMaxSize)
 	}
-	return Command{Name: PongCommandName, Data: append([]byte(nil), pc.Context...)}
+	return Command{Name: PongCommandName, Data: append([]byte(nil), pc.Context...)}, nil
 }

@@ -14,23 +14,26 @@ func TestReadyEncodeDecodeRoundTrip(t *testing.T) {
 	}{
 		{"empty", ReadyCommand{}},
 		{"single-prop", ReadyCommand{Metadata: Metadata{
-			{Name: "Socket-Type", Value: []byte("REQ")},
+			{Name: []byte("Socket-Type"), Value: []byte("REQ")},
 		}}},
 		{"multi-prop-ordered", ReadyCommand{Metadata: Metadata{
-			{Name: "Socket-Type", Value: []byte("DEALER")},
-			{Name: "Identity", Value: []byte("client-1")},
-			{Name: "Resource", Value: []byte("/tmp/foo")},
+			{Name: []byte("Socket-Type"), Value: []byte("DEALER")},
+			{Name: []byte("Identity"), Value: []byte("client-1")},
+			{Name: []byte("Resource"), Value: []byte("/tmp/foo")},
 		}}},
 		{"binary-value", ReadyCommand{Metadata: Metadata{
-			{Name: "X-Bin", Value: []byte{0x00, 0xFF, 0x80}},
+			{Name: []byte("X-Bin"), Value: []byte{0x00, 0xFF, 0x80}},
 		}}},
 		{"empty-value", ReadyCommand{Metadata: Metadata{
-			{Name: "X-Empty", Value: []byte{}},
+			{Name: []byte("X-Empty"), Value: []byte{}},
 		}}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			cmd := c.rc.Encode()
+			cmd, err := c.rc.Encode()
+			if err != nil {
+				t.Fatalf("encode: %v", err)
+			}
 			if cmd.Name != "READY" {
 				t.Fatalf("encoded command name=%q, want READY", cmd.Name)
 			}
@@ -42,9 +45,27 @@ func TestReadyEncodeDecodeRoundTrip(t *testing.T) {
 				t.Fatalf("metadata length: got %d, want %d", len(got.Metadata), len(c.rc.Metadata))
 			}
 			for i, p := range c.rc.Metadata {
-				if got.Metadata[i].Name != p.Name || !bytes.Equal(got.Metadata[i].Value, p.Value) {
+				if !bytes.Equal(got.Metadata[i].Name, p.Name) || !bytes.Equal(got.Metadata[i].Value, p.Value) {
 					t.Fatalf("property %d: got %+v, want %+v", i, got.Metadata[i], p)
 				}
+			}
+		})
+	}
+}
+
+func TestReadyEncodeRejectsInvalidName(t *testing.T) {
+	cases := []struct {
+		name string
+		md   Metadata
+	}{
+		{"empty-name", Metadata{{Name: []byte{}, Value: nil}}},
+		{"bad-char", Metadata{{Name: []byte("Bad Name"), Value: nil}}},
+		{"too-long", Metadata{{Name: bytes.Repeat([]byte{'A'}, 256), Value: nil}}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if _, err := (ReadyCommand{Metadata: c.md}).Encode(); !errors.Is(err, ErrInvalidCommand) {
+				t.Fatalf("want ErrInvalidCommand, got %v", err)
 			}
 		})
 	}
@@ -76,9 +97,24 @@ func TestParseReadyMalformedMetadata(t *testing.T) {
 	}
 }
 
+func TestParseReadyValueSizeOverflow(t *testing.T) {
+	// valSize = 0xFFFFFFFF (2^32-1) with a tiny actual payload. On 32-bit
+	// systems int(valSize) wraps to -1, and a buggy bound check could let
+	// the malicious record slip through.
+	data := []byte{
+		0x01, 'X', // name "X"
+		0xFF, 0xFF, 0xFF, 0xFF, // valSize = 2^32-1
+		'p', 'a', 'y', 'l', 'o', 'a', 'd',
+	}
+	cmd := Command{Name: "READY", Data: data}
+	if _, err := ParseReady(cmd); !errors.Is(err, ErrInvalidCommand) {
+		t.Fatalf("want ErrInvalidCommand for oversized valSize, got %v", err)
+	}
+}
+
 func TestMetadataGetCaseInsensitive(t *testing.T) {
 	m := Metadata{
-		{Name: "Socket-Type", Value: []byte("REQ")},
+		{Name: []byte("Socket-Type"), Value: []byte("REQ")},
 	}
 	v, ok := m.Get("socket-type")
 	if !ok || string(v) != "REQ" {
@@ -86,6 +122,19 @@ func TestMetadataGetCaseInsensitive(t *testing.T) {
 	}
 	if _, ok := m.Get("Identity"); ok {
 		t.Fatal("Get returned ok=true for missing key")
+	}
+}
+
+func TestMetadataGetZeroAlloc(t *testing.T) {
+	m := Metadata{
+		{Name: []byte("Socket-Type"), Value: []byte("REQ")},
+		{Name: []byte("Identity"), Value: []byte("c1")},
+	}
+	got := testing.AllocsPerRun(1000, func() {
+		_, _ = m.Get("identity")
+	})
+	if got != 0 {
+		t.Fatalf("Metadata.Get allocates %v allocs/op, want 0", got)
 	}
 }
 
@@ -116,7 +165,8 @@ func TestReadyRoundTripProperty(t *testing.T) {
 			// Make sure name is unique to preserve order semantics in the test.
 			ns := string(name)
 			if used[ns] {
-				ns = ns + "X" // simple disambiguation
+				name = append(name, 'X') // simple disambiguation
+				ns = string(name)
 			}
 			used[ns] = true
 			// Generate a value 0..32 bytes (any byte).
@@ -125,10 +175,13 @@ func TestReadyRoundTripProperty(t *testing.T) {
 			for j := 0; j < valLen; j++ {
 				val[j] = byte(seed >> uint(j))
 			}
-			md = append(md, MetadataProperty{Name: ns, Value: val})
+			md = append(md, MetadataProperty{Name: name, Value: val})
 		}
 		rc := ReadyCommand{Metadata: md}
-		cmd := rc.Encode()
+		cmd, err := rc.Encode()
+		if err != nil {
+			return false
+		}
 		got, err := ParseReady(cmd)
 		if err != nil {
 			return false
@@ -137,7 +190,7 @@ func TestReadyRoundTripProperty(t *testing.T) {
 			return false
 		}
 		for i := range rc.Metadata {
-			if got.Metadata[i].Name != rc.Metadata[i].Name {
+			if !bytes.Equal(got.Metadata[i].Name, rc.Metadata[i].Name) {
 				return false
 			}
 			if !bytes.Equal(got.Metadata[i].Value, rc.Metadata[i].Value) {

@@ -26,14 +26,14 @@ func ParseError(cmd Command) (ErrorCommand, error) {
 	return ErrorCommand{Reason: string(cmd.Data[1 : 1+reasonLen])}, nil
 }
 
-// Encode produces the wire form. Panics if Reason is longer than 255
-// characters — callers must validate before calling.
-func (ec ErrorCommand) Encode() Command {
+// Encode produces the wire form. Returns ErrInvalidCommand if Reason
+// is longer than 255 characters.
+func (ec ErrorCommand) Encode() (Command, error) {
 	if len(ec.Reason) > 255 {
-		panic("wire: ErrorCommand.Reason exceeds 255 chars")
+		return Command{}, fmt.Errorf("%w: ERROR reason %d > 255", ErrInvalidCommand, len(ec.Reason))
 	}
 	data := make([]byte, 1+len(ec.Reason))
 	data[0] = byte(len(ec.Reason))
 	copy(data[1:], ec.Reason)
-	return Command{Name: ErrorCommandName, Data: data}
+	return Command{Name: ErrorCommandName, Data: data}, nil
 }

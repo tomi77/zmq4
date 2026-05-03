@@ -13,7 +13,11 @@ func TestPingPongRoundTrip(t *testing.T) {
 		{TTL: 0xFFFF, Context: bytes.Repeat([]byte{0xAA}, 16)},
 	}
 	for _, p := range pings {
-		got, err := ParsePing(p.Encode())
+		cmd, err := p.Encode()
+		if err != nil {
+			t.Fatalf("ping encode: %v", err)
+		}
+		got, err := ParsePing(cmd)
 		if err != nil {
 			t.Fatalf("ping: %v", err)
 		}
@@ -28,7 +32,11 @@ func TestPingPongRoundTrip(t *testing.T) {
 		{Context: bytes.Repeat([]byte{0xBB}, 16)},
 	}
 	for _, p := range pongs {
-		got, err := ParsePong(p.Encode())
+		cmd, err := p.Encode()
+		if err != nil {
+			t.Fatalf("pong encode: %v", err)
+		}
+		got, err := ParsePong(cmd)
 		if err != nil {
 			t.Fatalf("pong: %v", err)
 		}
@@ -39,12 +47,15 @@ func TestPingPongRoundTrip(t *testing.T) {
 }
 
 func TestPingEncodeOversizedContext(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("want panic on oversized context")
-		}
-	}()
-	_ = PingCommand{Context: make([]byte, 17)}.Encode()
+	if _, err := (PingCommand{Context: make([]byte, 17)}).Encode(); !errors.Is(err, ErrInvalidCommand) {
+		t.Fatalf("want ErrInvalidCommand, got %v", err)
+	}
+}
+
+func TestPongEncodeOversizedContext(t *testing.T) {
+	if _, err := (PongCommand{Context: make([]byte, 17)}).Encode(); !errors.Is(err, ErrInvalidCommand) {
+		t.Fatalf("want ErrInvalidCommand, got %v", err)
+	}
 }
 
 func TestParsePingMalformed(t *testing.T) {

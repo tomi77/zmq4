@@ -67,6 +67,9 @@ func DecodeGreeting(src []byte) (Greeting, error) {
 	if err != nil {
 		return Greeting{}, err
 	}
+	if src[32] != 0 && src[32] != 1 {
+		return Greeting{}, fmt.Errorf("%w: as-server byte 0x%02X not in {0x00, 0x01}", ErrInvalidGreeting, src[32])
+	}
 	return Greeting{
 		Mechanism: mech,
 		AsServer:  src[32] == 1,

@@ -3,17 +3,26 @@ package wire
 import (
 	"encoding/binary"
 	"io"
+	"net"
 )
 
 // FrameWriter writes ZMTP 3.1 frames to an io.Writer. Not safe for
 // concurrent use.
+//
+// When the underlying writer is a *net.TCPConn or any io.Writer that
+// supports the writev fast path used by net.Buffers, header and body
+// are emitted in a single writev syscall. Otherwise the standard
+// library falls back to two sequential Writes.
 type FrameWriter struct {
-	w      io.Writer
-	header [9]byte
+	w       io.Writer
+	header  [9]byte
+	bufsArr [2][]byte // backing array for the per-call net.Buffers slice
 }
 
 // NewFrameWriter returns a FrameWriter wrapping w.
-func NewFrameWriter(w io.Writer) *FrameWriter { return &FrameWriter{w: w} }
+func NewFrameWriter(w io.Writer) *FrameWriter {
+	return &FrameWriter{w: w}
+}
 
 // WriteFrame encodes f and writes it to the underlying writer. Returns
 // ErrCommandHasMore if f is a command with the MORE flag set.
@@ -40,13 +49,16 @@ func (fw *FrameWriter) WriteFrame(f Frame) error {
 	} else {
 		fw.header[1] = byte(len(f.Body))
 	}
-	if _, err := fw.w.Write(fw.header[:hdrLen]); err != nil {
+	if len(f.Body) == 0 {
+		_, err := fw.w.Write(fw.header[:hdrLen])
 		return err
 	}
-	if len(f.Body) > 0 {
-		if _, err := fw.w.Write(f.Body); err != nil {
-			return err
-		}
-	}
-	return nil
+	// Build the net.Buffers slice from a fixed-size backing array on
+	// the struct. WriteTo mutates the slice header as it consumes
+	// buffers, but the array itself is reusable across calls.
+	fw.bufsArr[0] = fw.header[:hdrLen]
+	fw.bufsArr[1] = f.Body
+	bufs := net.Buffers(fw.bufsArr[:])
+	_, err := bufs.WriteTo(fw.w)
+	return err
 }

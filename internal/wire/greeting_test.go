@@ -130,6 +130,20 @@ func TestDecodeGreetingMechanismValidation(t *testing.T) {
 	})
 }
 
+func TestDecodeGreetingInvalidAsServer(t *testing.T) {
+	var buf [GreetingSize]byte
+	if err := EncodeGreeting(buf[:], Greeting{Mechanism: "NULL"}); err != nil {
+		t.Fatalf("setup encode: %v", err)
+	}
+	for _, bad := range []byte{0x02, 0x42, 0xFF} {
+		corrupt := buf
+		corrupt[32] = bad
+		if _, err := DecodeGreeting(corrupt[:]); !errors.Is(err, ErrInvalidGreeting) {
+			t.Fatalf("as-server=0x%02X: want ErrInvalidGreeting, got %v", bad, err)
+		}
+	}
+}
+
 func TestEncodeGreetingFillerIsZero(t *testing.T) {
 	var buf [GreetingSize]byte
 	for i := range buf {

@@ -13,7 +13,11 @@ func TestSubscribeCancelRoundTrip(t *testing.T) {
 		{Topic: bytes.Repeat([]byte{0xFF}, 4096)},
 	}
 	for _, s := range subs {
-		got, err := ParseSubscribe(s.Encode())
+		cmd, err := s.Encode()
+		if err != nil {
+			t.Fatalf("subscribe encode: %v", err)
+		}
+		got, err := ParseSubscribe(cmd)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -26,7 +30,11 @@ func TestSubscribeCancelRoundTrip(t *testing.T) {
 		{Topic: []byte("news")},
 	}
 	for _, c := range cancels {
-		got, err := ParseCancel(c.Encode())
+		cmd, err := c.Encode()
+		if err != nil {
+			t.Fatalf("cancel encode: %v", err)
+		}
+		got, err := ParseCancel(cmd)
 		if err != nil {
 			t.Fatal(err)
 		}
