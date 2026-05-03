@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/tomi77/zmq4/internal/wire"
@@ -76,6 +77,12 @@ func TestVectorReadyWithIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseReady: %v", err)
 	}
+	if len(rc.Metadata) != 2 {
+		t.Fatalf("metadata len = %d, want 2", len(rc.Metadata))
+	}
+	if v, ok := rc.Metadata.Get("Socket-Type"); !ok || string(v) != "ROUTER" {
+		t.Fatalf("Socket-Type = %q, want ROUTER", v)
+	}
 	want := []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08}
 	if v, ok := rc.Metadata.Get("Identity"); !ok || !bytes.Equal(v, want) {
 		t.Fatalf("Identity = %x, want %x", v, want)
@@ -94,7 +101,7 @@ func TestVectorError(t *testing.T) {
 	if !errors.Is(err, ErrPeerError) {
 		t.Fatalf("Receive(ERROR) = %v, want ErrPeerError", err)
 	}
-	if !bytes.Contains([]byte(err.Error()), []byte("Invalid client")) {
+	if !strings.Contains(err.Error(), "Invalid client") {
 		t.Fatalf("error %q does not contain peer reason", err)
 	}
 }
