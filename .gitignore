@@ -29,3 +29,6 @@ go.work.sum
 .envrc
 .env
 .env.local
+
+# Git worktrees
+.worktrees/
