@@ -255,6 +255,7 @@ func TestPeerMetadataIndependentOfInputBuffer(t *testing.T) {
 		t.Fatalf("encode: %v", err)
 	}
 	// Copy into a buffer we own and can clobber afterwards.
+	// Name is a string constant ("READY"); only Data aliases buf.
 	buf := make([]byte, len(original.Data))
 	copy(buf, original.Data)
 	peerCmd := wire.Command{Name: original.Name, Data: buf}
@@ -273,9 +274,13 @@ func TestPeerMetadataIndependentOfInputBuffer(t *testing.T) {
 	}
 
 	pm := s.PeerMetadata()
-	if len(pm) != 1 ||
-		string(pm[0].Name) != "Socket-Type" ||
-		string(pm[0].Value) != "DEALER" {
-		t.Fatalf("PeerMetadata after buffer clobber = %+v, want Socket-Type=DEALER", pm)
+	if len(pm) != 1 {
+		t.Fatalf("PeerMetadata len = %d, want 1 (metadata lost?)", len(pm))
+	}
+	if string(pm[0].Name) != "Socket-Type" {
+		t.Fatalf("PeerMetadata[0].Name = %q, want Socket-Type (buffer aliasing?)", pm[0].Name)
+	}
+	if string(pm[0].Value) != "DEALER" {
+		t.Fatalf("PeerMetadata[0].Value = %q, want DEALER (buffer aliasing?)", pm[0].Value)
 	}
 }
