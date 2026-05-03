@@ -178,7 +178,6 @@ via `fmt.Errorf("%w: ...", ErrXxx)` so callers can use `errors.Is`.
 | `ErrUnexpectedCommand` | Peer sent a command whose name is neither `READY` nor `ERROR` during the handshake. |
 | `ErrPeerError` | Peer sent an `ERROR` command. The wrapped string includes the peer's reason. |
 | `ErrMalformedReady` | Peer's `READY` command-data fails to parse as metadata (delegates to `wire.ParseReady`). |
-| `ErrDuplicateReady` | Peer sent a second `READY` after the first one succeeded. |
 
 **Not in scope:** ZAP rejection paths (F6), Socket-Type compatibility checks
 (F5), I/O errors (F4 layer above us).
