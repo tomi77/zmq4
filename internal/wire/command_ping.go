@@ -67,10 +67,10 @@ func ParsePong(cmd Command) (PongCommand, error) {
 }
 
 // Encode produces the Command form. Returns ErrInvalidCommand if
-// Context exceeds 16 bytes.
+// Context exceeds 16 bytes. Data aliases pc.Context.
 func (pc PongCommand) Encode() (Command, error) {
 	if len(pc.Context) > PingContextMaxSize {
 		return Command{}, fmt.Errorf("%w: PONG context %d > %d", ErrInvalidCommand, len(pc.Context), PingContextMaxSize)
 	}
-	return Command{Name: PongCommandName, Data: append([]byte(nil), pc.Context...)}, nil
+	return Command{Name: PongCommandName, Data: pc.Context}, nil
 }

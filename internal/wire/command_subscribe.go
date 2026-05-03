@@ -20,11 +20,10 @@ func ParseSubscribe(cmd Command) (SubscribeCommand, error) {
 	return SubscribeCommand{Topic: cmd.Data}, nil
 }
 
-// Encode produces the Command form. The error return is reserved for
-// future validation and is currently always nil; the signature matches
-// the other Encode methods for API symmetry.
+// Encode produces the Command form. Data aliases sc.Topic; mutating
+// Topic after Encode also mutates the returned Command.
 func (sc SubscribeCommand) Encode() (Command, error) {
-	return Command{Name: SubscribeCommandName, Data: append([]byte(nil), sc.Topic...)}, nil
+	return Command{Name: SubscribeCommandName, Data: sc.Topic}, nil
 }
 
 func ParseCancel(cmd Command) (CancelCommand, error) {
@@ -34,8 +33,8 @@ func ParseCancel(cmd Command) (CancelCommand, error) {
 	return CancelCommand{Topic: cmd.Data}, nil
 }
 
-// Encode produces the Command form. The error return is reserved for
-// future validation and is currently always nil.
+// Encode produces the Command form. Data aliases cc.Topic; mutating
+// Topic after Encode also mutates the returned Command.
 func (cc CancelCommand) Encode() (Command, error) {
-	return Command{Name: CancelCommandName, Data: append([]byte(nil), cc.Topic...)}, nil
+	return Command{Name: CancelCommandName, Data: cc.Topic}, nil
 }

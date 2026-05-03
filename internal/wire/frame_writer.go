@@ -53,9 +53,8 @@ func (fw *FrameWriter) WriteFrame(f Frame) error {
 		_, err := fw.w.Write(fw.header[:hdrLen])
 		return err
 	}
-	// Build the net.Buffers slice from a fixed-size backing array on
-	// the struct. WriteTo mutates the slice header as it consumes
-	// buffers, but the array itself is reusable across calls.
+	// Reuse bufsArr instead of a fresh net.Buffers literal: the literal
+	// would heap-allocate the underlying [2][]byte on every call.
 	fw.bufsArr[0] = fw.header[:hdrLen]
 	fw.bufsArr[1] = f.Body
 	bufs := net.Buffers(fw.bufsArr[:])

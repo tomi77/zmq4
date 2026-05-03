@@ -165,7 +165,7 @@ func TestReadyRoundTripProperty(t *testing.T) {
 			// Make sure name is unique to preserve order semantics in the test.
 			ns := string(name)
 			if used[ns] {
-				name = append(name, 'X') // simple disambiguation
+				name = append(name, 'X')
 				ns = string(name)
 			}
 			used[ns] = true

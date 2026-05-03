@@ -10,8 +10,7 @@ func BenchmarkEncodeFrame1KiB(b *testing.B) {
 	f := Frame{Kind: FrameMessage, Body: bytes.Repeat([]byte{0xAA}, 1024)}
 	buf := make([]byte, f.WireSize())
 	b.SetBytes(int64(f.WireSize()))
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = EncodeFrame(buf, f)
 	}
 }
@@ -21,8 +20,7 @@ func BenchmarkDecodeFrame1KiB(b *testing.B) {
 	buf := make([]byte, f.WireSize())
 	_, _ = EncodeFrame(buf, f)
 	b.SetBytes(int64(f.WireSize()))
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _, _ = DecodeFrame(buf)
 	}
 }
@@ -30,14 +28,11 @@ func BenchmarkDecodeFrame1KiB(b *testing.B) {
 func BenchmarkEncodeGreeting(b *testing.B) {
 	var buf [GreetingSize]byte
 	g := Greeting{Mechanism: "NULL"}
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = EncodeGreeting(buf[:], g)
 	}
 }
 
-// loopingReader serves the same bytes repeatedly without ever returning
-// io.EOF, so a benchmark loop never has to rebuild its source.
 type loopingReader struct {
 	buf []byte
 	off int
@@ -66,8 +61,7 @@ func BenchmarkFrameReader1KiB(b *testing.B) {
 	fr := NewFrameReader(src)
 	b.SetBytes(int64(f.WireSize()))
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if _, err := fr.ReadFrame(); err != nil {
 			b.Fatal(err)
 		}
@@ -79,8 +73,7 @@ func BenchmarkFrameWriter1KiB(b *testing.B) {
 	fw := NewFrameWriter(io.Discard)
 	b.SetBytes(int64(f.WireSize()))
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if err := fw.WriteFrame(f); err != nil {
 			b.Fatal(err)
 		}
