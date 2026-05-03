@@ -95,11 +95,19 @@ type zeroCopyReader struct {
 
 func (z *zeroCopyReader) readFrame() (wire.Frame, error) {
 	if _, err := io.ReadFull(z.r, z.header[:1]); err != nil {
-		return wire.Frame{}, err
+		return wire.Frame{}, err // io.EOF passes through cleanly: clean end-of-stream between frames.
 	}
 	flags := z.header[0]
 	more := flags&0x01 != 0
 	long := flags&0x02 != 0
+
+	if flags&0xF8 != 0 {
+		return wire.Frame{}, wire.ErrReservedFlags
+	}
+	cmd := flags&0x04 != 0
+	if cmd && more {
+		return wire.Frame{}, wire.ErrCommandHasMore
+	}
 
 	var size uint64
 	if long {
@@ -128,9 +136,14 @@ func (z *zeroCopyReader) readFrame() (wire.Frame, error) {
 			return wire.Frame{}, mapEOF(err)
 		}
 	}
-	return wire.Frame{Kind: wire.FrameMessage, More: more, Body: z.body}, nil
+	kind := wire.FrameMessage
+	if cmd {
+		kind = wire.FrameCommand
+	}
+	return wire.Frame{Kind: kind, More: more, Body: z.body}, nil
 }
 
+// mapEOF mirrors wire's internal mapEOF; kept local to avoid coupling to the internal package.
 func mapEOF(err error) error {
 	if err == io.EOF {
 		return io.ErrUnexpectedEOF
