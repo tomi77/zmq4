@@ -17,6 +17,10 @@ const (
 //	hello = "HELLO" username password
 //	username = OCTET 0*255OCTET    ; 1-byte length prefix
 //	password = OCTET 0*255OCTET    ; 1-byte length prefix
+//
+// Username and Password returned from parseHello alias the input
+// cmd.Data buffer; callers must not retain them past the buffer's
+// lifetime.
 type helloBody struct {
 	Username []byte
 	Password []byte
