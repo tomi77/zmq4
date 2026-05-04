@@ -105,6 +105,12 @@ has no timer; **detecting and aborting a stalled handshake is F4's
 responsibility** (connection layer).  F4 MUST set a deadline on the
 underlying connection before driving the PLAIN state machine in a read loop.
 
+Neither `INITIATE` nor `READY` places an upper bound on the number or total
+size of metadata properties; RFC 37 §2.4 imposes no limit.  **Enforcing
+limits on metadata size is F4's responsibility** (connection layer).  F4
+MUST cap total metadata bytes before passing commands to the state machine
+to prevent unbounded allocations.
+
 Ordering is **strict**: PLAIN is a request/response chain, unlike NULL's
 full-duplex `READY`. Each side waits for the previous step before sending
 the next one.
