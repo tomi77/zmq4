@@ -34,9 +34,7 @@ func TestRecvReturnsOwnedSlice(t *testing.T) {
 	errCh := make(chan error, 1)
 
 	// Receiver goroutine
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 
 		// First receive
 		got, err := receiver.Recv()
@@ -64,12 +62,10 @@ func TestRecvReturnsOwnedSlice(t *testing.T) {
 			errCh <- fmt.Errorf("mutation of first Recv result corrupted second receive: got %q", got2)
 			return
 		}
-	}()
+	})
 
 	// Sender goroutine
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 
 		// First send
 		if err := sender.Send(payload); err != nil {
@@ -81,7 +77,7 @@ func TestRecvReturnsOwnedSlice(t *testing.T) {
 		if err := sender.Send(payload); err != nil {
 			errCh <- err
 		}
-	}()
+	})
 
 	wg.Wait()
 
@@ -107,9 +103,7 @@ func TestRecvMsgPartsAreOwned(t *testing.T) {
 	errCh := make(chan error, 1)
 
 	// Receiver goroutine
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 
 		// First receive
 		got, err := receiver.RecvMsg()
@@ -139,12 +133,10 @@ func TestRecvMsgPartsAreOwned(t *testing.T) {
 			errCh <- fmt.Errorf("mutation of first RecvMsg result corrupted second receive: got %q %q", got2[0], got2[1])
 			return
 		}
-	}()
+	})
 
 	// Sender goroutine
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 
 		// First send
 		if err := sender.SendMsg(want); err != nil {
@@ -156,7 +148,7 @@ func TestRecvMsgPartsAreOwned(t *testing.T) {
 		if err := sender.SendMsg(want); err != nil {
 			errCh <- err
 		}
-	}()
+	})
 
 	wg.Wait()
 

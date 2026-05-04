@@ -34,7 +34,7 @@ func BenchmarkHandshake(b *testing.B) {
 // returned Command aliases wire's encoded buffer; null does not copy).
 //
 // Receive(READY) with N metadata properties: 1 + 2N null.State-owned
-// allocations from copyMetadata (one for the Metadata slice, one Name
+// allocations from metaclone.Clone (one for the Metadata slice, one Name
 // and one Value buffer per property). This is the defensive-copy
 // budget required by the buffer-independence contract pinned in
 // TestPeerMetadataIndependentOfInputBuffer.
@@ -68,7 +68,7 @@ func TestStartAndReceiveAllocBudget(t *testing.T) {
 	// 1 metadata-slice + 2 byte buffers per property; here N=1.
 	const wantNullShare = 3.0
 	if nullShare != wantNullShare {
-		t.Fatalf("null.State alloc share = %v (full=%v, wire=%v), want %v: copyMetadata budget changed",
+		t.Fatalf("null.State alloc share = %v (full=%v, wire=%v), want %v: metaclone.Clone budget changed",
 			nullShare, full, wireOnly, wantNullShare)
 	}
 }

@@ -46,7 +46,7 @@ func ParseReady(cmd Command) (ReadyCommand, error) {
 	if cmd.Name != ReadyCommandName {
 		return ReadyCommand{}, fmt.Errorf("%w: expected READY, got %q", ErrInvalidCommand, cmd.Name)
 	}
-	md, err := parseMetadata(cmd.Data)
+	md, err := ParseMetadata(cmd.Data)
 	if err != nil {
 		return ReadyCommand{}, err
 	}
@@ -65,10 +65,15 @@ func (rc ReadyCommand) Encode() (Command, error) {
 			return Command{}, fmt.Errorf("%w: metadata value too large (%d > 2^32-1)", ErrInvalidCommand, len(p.Value))
 		}
 	}
-	return Command{Name: ReadyCommandName, Data: encodeMetadata(rc.Metadata)}, nil
+	return Command{Name: ReadyCommandName, Data: EncodeMetadata(rc.Metadata)}, nil
 }
 
-func parseMetadata(data []byte) (Metadata, error) {
+// ParseMetadata decodes a metadata blob (sequence of *property as defined
+// in RFC 37 §2.4) into a Metadata value. The returned slice aliases the
+// input buffer; copy if you need an independent lifetime.
+//
+// Used by ParseReady (READY) and by internal/security/plain (INITIATE).
+func ParseMetadata(data []byte) (Metadata, error) {
 	var out Metadata
 	for off := 0; off < len(data); {
 		nameLen := int(data[off])
@@ -101,7 +106,10 @@ func parseMetadata(data []byte) (Metadata, error) {
 	return out, nil
 }
 
-func encodeMetadata(md Metadata) []byte {
+// EncodeMetadata is the inverse of ParseMetadata.
+//
+// Used by (ReadyCommand).Encode and by internal/security/plain.
+func EncodeMetadata(md Metadata) []byte {
 	size := 0
 	for _, p := range md {
 		size += 1 + len(p.Name) + 4 + len(p.Value)
