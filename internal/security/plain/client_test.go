@@ -1,0 +1,75 @@
+package plain
+
+import (
+	"bytes"
+	"errors"
+	"testing"
+
+	"github.com/tomi77/zmq4/internal/wire"
+)
+
+func TestNewClientRejectsLongUsername(t *testing.T) {
+	long := bytes.Repeat([]byte("u"), 256)
+	_, err := NewClient(long, []byte("p"), nil)
+	if !errors.Is(err, ErrCredentialsTooLong) {
+		t.Fatalf("err = %v, want ErrCredentialsTooLong", err)
+	}
+}
+
+func TestNewClientRejectsLongPassword(t *testing.T) {
+	long := bytes.Repeat([]byte("p"), 256)
+	_, err := NewClient([]byte("u"), long, nil)
+	if !errors.Is(err, ErrCredentialsTooLong) {
+		t.Fatalf("err = %v, want ErrCredentialsTooLong", err)
+	}
+}
+
+func TestNewClientNotDone(t *testing.T) {
+	c, err := NewClient([]byte("u"), []byte("p"), nil)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	if c.Done() {
+		t.Fatalf("new client is Done()")
+	}
+}
+
+func TestClientStartEmitsHello(t *testing.T) {
+	c, err := NewClient([]byte("admin"), []byte("secret"), nil)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	cmd, err := c.Start()
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if cmd.Name != helloCommandName {
+		t.Fatalf("cmd.Name = %q, want %q", cmd.Name, helloCommandName)
+	}
+	body, err := parseHello(cmd)
+	if err != nil {
+		t.Fatalf("parseHello: %v", err)
+	}
+	if !bytes.Equal(body.Username, []byte("admin")) {
+		t.Fatalf("Username = %x, want admin", body.Username)
+	}
+	if !bytes.Equal(body.Password, []byte("secret")) {
+		t.Fatalf("Password = %x, want secret", body.Password)
+	}
+}
+
+func TestClientStartTwiceReturnsAlreadyStarted(t *testing.T) {
+	c, err := NewClient(nil, nil, nil)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	if _, err := c.Start(); err != nil {
+		t.Fatalf("first Start: %v", err)
+	}
+	if _, err := c.Start(); !errors.Is(err, ErrAlreadyStarted) {
+		t.Fatalf("second Start = %v, want ErrAlreadyStarted", err)
+	}
+}
+
+// silence unused-import warning until later tasks use wire.
+var _ = wire.ReadyCommandName
