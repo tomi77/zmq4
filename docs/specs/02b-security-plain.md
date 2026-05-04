@@ -378,8 +378,9 @@ ERROR command to send. The same convention applies if a future malformed-
 * path on the server wants to notify the client — though F2b does **not**
 emit ERROR for malformed inputs (the spec is silent on this; we treat
 malformed input as a fatal local error and let F4 close the connection
-without sending anything). If field experience shows otherwise, this is
-an additive change behind the same `(out, err)` contract.
+without sending anything). This behavior is an implementation choice and
+may be revised based on interop testing in F4. If field experience shows
+otherwise, this is an additive change behind the same `(out, err)` contract.
 
 **Not in scope:** ZAP rejection paths other than via the `Authenticator`
 callback (F6), Socket-Type compatibility checks (F5), I/O errors / partial
