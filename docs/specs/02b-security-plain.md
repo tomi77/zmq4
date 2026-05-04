@@ -1,6 +1,6 @@
 # 02b — PLAIN security mechanism (Phase 2b)
 
-> **Status:** draft, awaiting approval before implementation.
+> **Status:** implemented, frozen for F2c+.
 > **Author:** Tomasz Rup
 > **Date:** 2026-05-03
 > **Layer:** L2 — `internal/security/plain`
@@ -587,14 +587,14 @@ budget for F2c regression checks.
 
 ### 8.6 Done criteria
 
-- [ ] All unit tests pass.
-- [ ] Both property tests pass 1000 iterations each.
-- [ ] All 7 vector tests pass.
-- [ ] `go vet ./...` clean.
-- [ ] `staticcheck ./...` clean.
-- [ ] `modernize -fix ./...` clean (no diff).
-- [ ] `go test -race ./internal/security/plain/...` clean.
-- [ ] Benchmark allocs/op pinned via `testing.AllocsPerRun` for the
+- [x] All unit tests pass.
+- [x] Both property tests pass 1000 iterations each.
+- [x] All 7 vector tests pass.
+- [x] `go vet ./...` clean.
+- [x] `staticcheck ./...` clean.
+- [x] `modernize -fix ./...` clean (no diff).
+- [x] `go test -race ./internal/security/plain/...` clean.
+- [x] Benchmark allocs/op pinned via `testing.AllocsPerRun` for the
       client-side and server-side happy paths, with the same defensive-
       copy budget as F2a (one slice header + one `Name` and one `Value`
       buffer per peer property in the metadata-bearing step).
