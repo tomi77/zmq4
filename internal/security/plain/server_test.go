@@ -1,7 +1,6 @@
 package plain
 
 import (
-	"bytes"
 	"errors"
 	"strings"
 	"testing"
@@ -48,10 +47,142 @@ func TestServerReceiveHelloAcceptEmitsWelcome(t *testing.T) {
 	}
 }
 
-// silence unused imports if the rest of the file doesn't use them yet.
-var (
-	_ = bytes.Equal
-	_ = errors.Is
-	_ = strings.Contains
-	_ = wire.Command{}
-)
+func TestServerReceiveHelloRejectEmitsErrorAndFails(t *testing.T) {
+	rejecter := func(_, _ []byte) error { return errors.New("denied") }
+	s := NewServer(rejecter, nil)
+	hello, _ := encodeHello(helloBody{Username: []byte("u"), Password: []byte("p")})
+
+	out, done, err := s.Receive(hello)
+	if !errors.Is(err, ErrAuthRejected) {
+		t.Fatalf("err = %v, want ErrAuthRejected", err)
+	}
+	if done {
+		t.Fatalf("done=true on auth reject, want false")
+	}
+	if out == nil || out.Name != wire.ErrorCommandName {
+		t.Fatalf("out = %+v, want ERROR command", out)
+	}
+	ec, perr := wire.ParseError(*out)
+	if perr != nil {
+		t.Fatalf("ParseError(out): %v", perr)
+	}
+	if ec.Reason != "denied" {
+		t.Fatalf("reason = %q, want \"denied\"", ec.Reason)
+	}
+	if !strings.Contains(err.Error(), "denied") {
+		t.Fatalf("err %q does not include reason", err)
+	}
+}
+
+func TestServerAuthRejectReasonSanitized(t *testing.T) {
+	dirty := "bad creds\n\x00user=alice"
+	rejecter := func(_, _ []byte) error { return errors.New(dirty) }
+	s := NewServer(rejecter, nil)
+	hello, _ := encodeHello(helloBody{})
+
+	out, _, _ := s.Receive(hello)
+	ec, _ := wire.ParseError(*out)
+	if strings.ContainsAny(ec.Reason, "\n\x00") {
+		t.Fatalf("reason %q has non-VCHAR bytes", ec.Reason)
+	}
+	if len(ec.Reason) != len(dirty) {
+		t.Fatalf("len(reason) = %d, want %d", len(ec.Reason), len(dirty))
+	}
+}
+
+func TestServerAuthRejectReasonTruncated(t *testing.T) {
+	long := strings.Repeat("a", 300)
+	rejecter := func(_, _ []byte) error { return errors.New(long) }
+	s := NewServer(rejecter, nil)
+	hello, _ := encodeHello(helloBody{})
+
+	out, _, _ := s.Receive(hello)
+	ec, _ := wire.ParseError(*out)
+	if len(ec.Reason) != 255 {
+		t.Fatalf("len(reason) = %d, want 255", len(ec.Reason))
+	}
+}
+
+func TestServerReceiveAfterAuthReject(t *testing.T) {
+	rejecter := func(_, _ []byte) error { return errors.New("nope") }
+	s := NewServer(rejecter, nil)
+	hello, _ := encodeHello(helloBody{})
+	if _, _, err := s.Receive(hello); !errors.Is(err, ErrAuthRejected) {
+		t.Fatalf("first Receive: %v", err)
+	}
+	_, _, err := s.Receive(hello)
+	if !errors.Is(err, ErrAlreadyFailed) {
+		t.Fatalf("Receive after reject = %v, want ErrAlreadyFailed", err)
+	}
+}
+
+func TestServerReceiveInitiateCompletesHandshake(t *testing.T) {
+	s := NewServer(acceptAll, wire.Metadata{
+		{Name: []byte("Socket-Type"), Value: []byte("REP")},
+	})
+	hello, _ := encodeHello(helloBody{Username: []byte("u"), Password: []byte("p")})
+	if _, _, err := s.Receive(hello); err != nil {
+		t.Fatalf("Receive(HELLO): %v", err)
+	}
+
+	clientMeta := wire.Metadata{
+		{Name: []byte("Socket-Type"), Value: []byte("REQ")},
+		{Name: []byte("Identity"), Value: []byte("client-1")},
+	}
+	initiate := wire.Command{
+		Name: initiateCommandName,
+		Data: wire.EncodeMetadata(clientMeta),
+	}
+
+	out, done, err := s.Receive(initiate)
+	if err != nil {
+		t.Fatalf("Receive(INITIATE): %v", err)
+	}
+	if !done {
+		t.Fatalf("done=false after INITIATE, want true")
+	}
+	if out == nil || out.Name != wire.ReadyCommandName {
+		t.Fatalf("out = %+v, want READY", out)
+	}
+	rc, perr := wire.ParseReady(*out)
+	if perr != nil {
+		t.Fatalf("ParseReady(out): %v", perr)
+	}
+	if v, ok := rc.Metadata.Get("Socket-Type"); !ok || string(v) != "REP" {
+		t.Fatalf("READY Socket-Type = %q, want REP", v)
+	}
+	if !s.Done() {
+		t.Fatalf("Done()=false after success")
+	}
+	pm := s.PeerMetadata()
+	if v, ok := pm.Get("Identity"); !ok || string(v) != "client-1" {
+		t.Fatalf("PeerMetadata Identity = %q, want client-1", v)
+	}
+}
+
+func TestServerPeerMetadataIndependentOfInputBuffer(t *testing.T) {
+	s := NewServer(acceptAll, nil)
+	hello, _ := encodeHello(helloBody{})
+	if _, _, err := s.Receive(hello); err != nil {
+		t.Fatalf("Receive(HELLO): %v", err)
+	}
+
+	originalData := wire.EncodeMetadata(wire.Metadata{
+		{Name: []byte("Socket-Type"), Value: []byte("DEALER")},
+	})
+	buf := make([]byte, len(originalData))
+	copy(buf, originalData)
+	initiate := wire.Command{Name: initiateCommandName, Data: buf}
+
+	if _, _, err := s.Receive(initiate); err != nil {
+		t.Fatalf("Receive(INITIATE): %v", err)
+	}
+
+	for i := range buf {
+		buf[i] = 0xFF
+	}
+	pm := s.PeerMetadata()
+	if v, ok := pm.Get("Socket-Type"); !ok || string(v) != "DEALER" {
+		t.Fatalf("PeerMetadata after clobber = %q, want DEALER", v)
+	}
+}

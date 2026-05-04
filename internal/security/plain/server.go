@@ -3,6 +3,7 @@ package plain
 import (
 	"fmt"
 
+	"github.com/tomi77/zmq4/internal/security/metaclone"
 	"github.com/tomi77/zmq4/internal/wire"
 )
 
@@ -74,7 +75,25 @@ func (s *ServerState) Receive(cmd wire.Command) (out *wire.Command, done bool, e
 		return nil, false, fmt.Errorf("%w: %q (expected HELLO)", ErrUnexpectedCommand, cmd.Name)
 	}
 
-	// Expecting INITIATE — fleshed out in Task 9.
+	// Expecting INITIATE.
+	switch cmd.Name {
+	case initiateCommandName:
+		md, perr := wire.ParseMetadata(cmd.Data)
+		if perr != nil {
+			s.failed = true
+			return nil, false, fmt.Errorf("%w: %v", ErrMalformedInitiate, perr)
+		}
+		s.peer = metaclone.Clone(md)
+		ready, encErr := wire.ReadyCommand{Metadata: s.local}.Encode()
+		if encErr != nil {
+			s.failed = true
+			return nil, false, fmt.Errorf("plain: encode READY: %w", encErr)
+		}
+		s.done = true
+		return &ready, true, nil
+	case wire.ErrorCommandName:
+		return nil, false, s.failPeerError(cmd)
+	}
 	s.failed = true
 	return nil, false, fmt.Errorf("%w: %q (expected INITIATE)", ErrUnexpectedCommand, cmd.Name)
 }
