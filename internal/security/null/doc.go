@@ -8,5 +8,8 @@
 // reads no clocks. It consumes and produces wire.Command values on
 // behalf of the caller.
 //
+// State is not reusable. A new State instance MUST be created for each
+// connection attempt; there is no reset mechanism.
+//
 // See docs/specs/02a-security-null.md for the full specification.
 package null

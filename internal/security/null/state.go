@@ -6,8 +6,9 @@ import (
 	"github.com/tomi77/zmq4/internal/wire"
 )
 
-// State drives one side of a ZMTP 3.1 NULL handshake. It is single-shot
-// and not safe for concurrent use.
+// State drives one side of a ZMTP 3.1 NULL handshake. It is single-shot,
+// not safe for concurrent use, and not reusable: create a new State for
+// each connection attempt.
 type State struct {
 	local    wire.Metadata
 	peer     wire.Metadata // populated by Receive on a valid peer READY
