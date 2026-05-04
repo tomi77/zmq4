@@ -186,3 +186,87 @@ func TestServerPeerMetadataIndependentOfInputBuffer(t *testing.T) {
 		t.Fatalf("PeerMetadata after clobber = %q, want DEALER", v)
 	}
 }
+
+func TestServerReceiveMalformedHello(t *testing.T) {
+	s := NewServer(acceptAll, nil)
+	bad := wire.Command{Name: helloCommandName, Data: []byte{0xFF}} // claims 255-byte username, no body
+	_, _, err := s.Receive(bad)
+	if !errors.Is(err, ErrMalformedHello) {
+		t.Fatalf("err = %v, want ErrMalformedHello", err)
+	}
+}
+
+func TestServerReceiveUnexpectedCommandAtHelloStep(t *testing.T) {
+	s := NewServer(acceptAll, nil)
+	cmd := wire.Command{Name: "PING"}
+	_, _, err := s.Receive(cmd)
+	if !errors.Is(err, ErrUnexpectedCommand) {
+		t.Fatalf("err = %v, want ErrUnexpectedCommand", err)
+	}
+}
+
+func TestServerReceiveUnexpectedCommandAtInitiateStep(t *testing.T) {
+	s := NewServer(acceptAll, nil)
+	hello, _ := encodeHello(helloBody{})
+	if _, _, err := s.Receive(hello); err != nil {
+		t.Fatalf("Receive(HELLO): %v", err)
+	}
+	_, _, err := s.Receive(wire.Command{Name: "PING"})
+	if !errors.Is(err, ErrUnexpectedCommand) {
+		t.Fatalf("err = %v, want ErrUnexpectedCommand", err)
+	}
+}
+
+func TestServerReceiveMalformedInitiate(t *testing.T) {
+	s := NewServer(acceptAll, nil)
+	hello, _ := encodeHello(helloBody{})
+	if _, _, err := s.Receive(hello); err != nil {
+		t.Fatalf("Receive(HELLO): %v", err)
+	}
+	bad := wire.Command{Name: initiateCommandName, Data: []byte{0x05, 'A'}}
+	_, _, err := s.Receive(bad)
+	if !errors.Is(err, ErrMalformedInitiate) {
+		t.Fatalf("err = %v, want ErrMalformedInitiate", err)
+	}
+}
+
+func TestServerReceiveErrorAtHelloStep(t *testing.T) {
+	s := NewServer(acceptAll, nil)
+	errCmd, _ := wire.ErrorCommand{Reason: "client gives up"}.Encode()
+	_, _, err := s.Receive(errCmd)
+	if !errors.Is(err, ErrPeerError) {
+		t.Fatalf("err = %v, want ErrPeerError", err)
+	}
+	if !strings.Contains(err.Error(), "client gives up") {
+		t.Fatalf("error %q does not include reason", err)
+	}
+}
+
+func TestServerReceiveErrorAtInitiateStep(t *testing.T) {
+	s := NewServer(acceptAll, nil)
+	hello, _ := encodeHello(helloBody{})
+	if _, _, err := s.Receive(hello); err != nil {
+		t.Fatalf("Receive(HELLO): %v", err)
+	}
+	errCmd, _ := wire.ErrorCommand{Reason: "client aborts"}.Encode()
+	_, _, err := s.Receive(errCmd)
+	if !errors.Is(err, ErrPeerError) {
+		t.Fatalf("err = %v, want ErrPeerError", err)
+	}
+}
+
+func TestServerReceiveAfterDone(t *testing.T) {
+	s := NewServer(acceptAll, nil)
+	hello, _ := encodeHello(helloBody{})
+	if _, _, err := s.Receive(hello); err != nil {
+		t.Fatalf("Receive(HELLO): %v", err)
+	}
+	initiate := wire.Command{Name: initiateCommandName, Data: wire.EncodeMetadata(nil)}
+	if _, _, err := s.Receive(initiate); err != nil {
+		t.Fatalf("Receive(INITIATE): %v", err)
+	}
+	_, _, err := s.Receive(initiate)
+	if !errors.Is(err, ErrAlreadyDone) {
+		t.Fatalf("err = %v, want ErrAlreadyDone", err)
+	}
+}
