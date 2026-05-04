@@ -231,9 +231,10 @@ func (s *ServerState) Done() bool
 - **`out, err` both non-nil on auth-reject.** Server's `Receive(HELLO)`
   with a failing authenticator returns `(out=ERROR_cmd, err=ErrAuthRejected)`.
   Caller contract: if `out != nil`, send it on the wire. If `err != nil`,
-  close the connection after the send. This single rule covers auth
-  reject and any future "abort with notification" path without adding a
-  second return slot.
+  close the connection after the send. If sending `out` fails, the
+  connection MUST be closed; the state machine MUST NOT be reused.
+  This single rule covers auth reject and any future "abort with
+  notification" path without adding a second return slot.
 - **Server has no `Start`.** PLAIN server is passive; introducing a
   no-op `Start()` would suggest symmetry that doesn't exist. F4 calls
   `Start` only on the active side (driven by `greeting.AsServer`).
