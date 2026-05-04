@@ -6,7 +6,8 @@
 > **Layer:** L2 — `internal/security/curve` + cross-mechanism extraction
 > in `internal/security` (root).
 > **Depends on:** F1 (`internal/wire`), F2a (`internal/security/null`),
-> F2b (`internal/security/plain`), `internal/security/metaclone`.
+> F2b (`internal/security/plain`), `internal/security/seccommon`
+> (renamed from `internal/security/metaclone` as part of F2c — see §5.1).
 > **External dependencies (new):** `golang.org/x/crypto/nacl/box` and
 > `golang.org/x/crypto/nacl/secretbox` (sanctioned in
 > `00-meta-overview.md` §7).
@@ -688,7 +689,7 @@ func parseInitiate (cmd wire.Command, sharedKey *SharedKey)
                                                            metadata wire.Metadata, err error)
 
 func encodeVouch   (clientTransPub PublicKey, serverLongPub PublicKey,
-                    clientLongSec *SecretKey, rand io.Reader) ([96]byte, error)
+                    vouchShared *SharedKey, rand io.Reader)   ([96]byte, error)
 func openVouch     (vouch [96]byte, clientLongPub PublicKey,
                     serverLongSec *SecretKey)             (clientTransPub PublicKey,
                                                            serverLongPub PublicKey, err error)
@@ -714,19 +715,36 @@ Codec functions own zero state. They call `nacl/box.SealAfterPrecomputation`
 / `OpenAfterPrecomputation` and `nacl/secretbox.Seal` / `Open`. They do
 no I/O (no goroutines, no sleeps, no syscalls beyond `rand.Read`).
 
+`encodeVouch` accepts a precomputed `vouchShared *SharedKey` (= `c × S`)
+rather than the long-term `*SecretKey`. This keeps the codec consistent
+with the lifecycle rule in §5.2 — `ClientState.Start` precomputes
+`vouchShared` once, derefs the caller's `*SecretKey` exactly once at
+construction, and `Receive(WELCOME)` zeros `vouchShared` immediately
+after sealing the vouch into INITIATE. The server side does not
+precompute (vouch is opened only once, in `Receive(INITIATE)`), so
+`openVouch` keeps its `*SecretKey` parameter and uses `box.Open`
+directly.
+
 `metadata` is encoded/decoded via `wire.EncodeMetadata` /
 `wire.ParseMetadata` (the F2b L1 exports). `parseInitiate` and
-`parseReady` perform a defensive copy of metadata via
-`metaclone.Clone` so the result is independent of the input buffer.
+`parseReady` return metadata that **aliases the decrypted plaintext
+buffer**; the calling state machine (`ClientState.handleReady` /
+`ServerState.handleInitiate`) is responsible for the defensive copy
+via `seccommon.CloneMetadata` before exposing it through
+`PeerMetadata()`.
 
-`sanitizeReason` (already in `plain`) is promoted to a shared
-`internal/security/seccommon` package alongside `metaclone.Clone`
-(which moves there too, exported as `seccommon.CloneMetadata`). All
-three mechanisms then import `seccommon` for both helpers. The rename
-is internal-package-only; no external API surface changes. F2c
-implementation handles the rename in a dedicated commit before
-landing CURVE code, so the move is reviewable independently from the
-new functionality.
+The shared helper package is `internal/security/seccommon`. F2c
+promotes two helpers there in a dedicated migration before any CURVE
+code lands:
+
+- `seccommon.CloneMetadata` — formerly `metaclone.Clone` in F2a; the
+  `internal/security/metaclone` package is renamed to `seccommon` and
+  the function exported under its new name.
+- `seccommon.SanitizeReason` — formerly `plain.sanitizeReason`; promoted
+  so all three mechanisms (NULL, PLAIN, CURVE) share one VCHAR-
+  sanitization routine.
+
+The rename is internal-package-only; no external API surface changes.
 
 ### 5.2 ClientState
 
@@ -849,7 +867,8 @@ Approximate footprint: ~350–400 bytes.
 
 Same contract as F2a/F2b: peer metadata returned from `PeerMetadata()`
 is independent of the input frame buffer. Implementation reuses
-`metaclone.Clone`.
+`seccommon.CloneMetadata` (the renamed-and-relocated former
+`metaclone.Clone`; see §5.1).
 
 ### 5.5 Nonce semantics
 
