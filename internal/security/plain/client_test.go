@@ -3,6 +3,7 @@ package plain
 import (
 	"bytes"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/tomi77/zmq4/internal/wire"
@@ -181,5 +182,150 @@ func TestClientPeerMetadataIndependentOfInputBuffer(t *testing.T) {
 	pm := c.PeerMetadata()
 	if v, ok := pm.Get("Socket-Type"); !ok || string(v) != "DEALER" {
 		t.Fatalf("PeerMetadata after clobber = %q, want DEALER", v)
+	}
+}
+
+func TestClientReceiveBeforeStart(t *testing.T) {
+	c, _ := NewClient(nil, nil, nil)
+	_, _, err := c.Receive(encodeWelcome())
+	if !errors.Is(err, ErrNotStarted) {
+		t.Fatalf("Receive before Start = %v, want ErrNotStarted", err)
+	}
+}
+
+func TestClientReceiveErrorAtWelcomeStep(t *testing.T) {
+	errCmd, _ := wire.ErrorCommand{Reason: "go away"}.Encode()
+	c, _ := NewClient(nil, nil, nil)
+	if _, err := c.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	_, _, err := c.Receive(errCmd)
+	if !errors.Is(err, ErrPeerError) {
+		t.Fatalf("err = %v, want ErrPeerError", err)
+	}
+	if !strings.Contains(err.Error(), "go away") {
+		t.Fatalf("error %q does not include reason", err)
+	}
+}
+
+func TestClientReceiveErrorAtReadyStep(t *testing.T) {
+	errCmd, _ := wire.ErrorCommand{Reason: "denied"}.Encode()
+	c, _ := NewClient(nil, nil, nil)
+	if _, err := c.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if _, _, err := c.Receive(encodeWelcome()); err != nil {
+		t.Fatalf("Receive(WELCOME): %v", err)
+	}
+	_, _, err := c.Receive(errCmd)
+	if !errors.Is(err, ErrPeerError) {
+		t.Fatalf("err = %v, want ErrPeerError", err)
+	}
+	if !strings.Contains(err.Error(), "denied") {
+		t.Fatalf("error %q does not include reason", err)
+	}
+}
+
+func TestClientReceiveUnexpectedCommandAtWelcomeStep(t *testing.T) {
+	cmd := wire.Command{Name: "PING"}
+	c, _ := NewClient(nil, nil, nil)
+	if _, err := c.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	_, _, err := c.Receive(cmd)
+	if !errors.Is(err, ErrUnexpectedCommand) {
+		t.Fatalf("err = %v, want ErrUnexpectedCommand", err)
+	}
+}
+
+func TestClientReceiveUnexpectedCommandAtReadyStep(t *testing.T) {
+	cmd := wire.Command{Name: "PING"}
+	c, _ := NewClient(nil, nil, nil)
+	if _, err := c.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if _, _, err := c.Receive(encodeWelcome()); err != nil {
+		t.Fatalf("Receive(WELCOME): %v", err)
+	}
+	_, _, err := c.Receive(cmd)
+	if !errors.Is(err, ErrUnexpectedCommand) {
+		t.Fatalf("err = %v, want ErrUnexpectedCommand", err)
+	}
+}
+
+func TestClientReceiveMalformedWelcome(t *testing.T) {
+	bad := wire.Command{Name: welcomeCommandName, Data: []byte{0xAA}}
+	c, _ := NewClient(nil, nil, nil)
+	if _, err := c.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	_, _, err := c.Receive(bad)
+	if !errors.Is(err, ErrMalformedWelcome) {
+		t.Fatalf("err = %v, want ErrMalformedWelcome", err)
+	}
+}
+
+func TestClientReceiveMalformedReady(t *testing.T) {
+	bad := wire.Command{
+		Name: wire.ReadyCommandName,
+		// nameLen=5 but only 2 bytes follow
+		Data: []byte{0x05, 'A', 'B'},
+	}
+	c, _ := NewClient(nil, nil, nil)
+	if _, err := c.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if _, _, err := c.Receive(encodeWelcome()); err != nil {
+		t.Fatalf("Receive(WELCOME): %v", err)
+	}
+	_, _, err := c.Receive(bad)
+	if !errors.Is(err, ErrMalformedReady) {
+		t.Fatalf("err = %v, want ErrMalformedReady", err)
+	}
+}
+
+func TestClientReceiveAfterDone(t *testing.T) {
+	c, _ := NewClient(nil, nil, nil)
+	if _, err := c.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if _, _, err := c.Receive(encodeWelcome()); err != nil {
+		t.Fatalf("Receive(WELCOME): %v", err)
+	}
+	peerReady, _ := wire.ReadyCommand{}.Encode()
+	if _, _, err := c.Receive(peerReady); err != nil {
+		t.Fatalf("Receive(READY): %v", err)
+	}
+	_, _, err := c.Receive(peerReady)
+	if !errors.Is(err, ErrAlreadyDone) {
+		t.Fatalf("Receive after done = %v, want ErrAlreadyDone", err)
+	}
+}
+
+func TestClientReceiveAfterFailed(t *testing.T) {
+	c, _ := NewClient(nil, nil, nil)
+	if _, err := c.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if _, _, err := c.Receive(wire.Command{Name: "PING"}); !errors.Is(err, ErrUnexpectedCommand) {
+		t.Fatalf("first Receive: %v", err)
+	}
+	_, _, err := c.Receive(wire.Command{Name: "PING"})
+	if !errors.Is(err, ErrAlreadyFailed) {
+		t.Fatalf("Receive after failure = %v, want ErrAlreadyFailed", err)
+	}
+}
+
+func TestClientStartAfterFailedReturnsAlreadyFailed(t *testing.T) {
+	c, _ := NewClient(nil, nil, nil)
+	if _, err := c.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if _, _, err := c.Receive(wire.Command{Name: "PING"}); !errors.Is(err, ErrUnexpectedCommand) {
+		t.Fatalf("Receive: %v", err)
+	}
+	_, err := c.Start()
+	if !errors.Is(err, ErrAlreadyFailed) {
+		t.Fatalf("Start after failure = %v, want ErrAlreadyFailed", err)
 	}
 }
