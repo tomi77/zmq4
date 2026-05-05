@@ -419,3 +419,81 @@ func TestParseInitiateRejectsTamperedOuterBox(t *testing.T) {
 		t.Fatalf("err = %v, want ErrBoxOpen", err)
 	}
 }
+
+func TestEncodeReadyRoundTrip(t *testing.T) {
+	clientTransPub, clientTransSec := makePair(t)
+	serverTransPub, serverTransSec := makePair(t)
+	afterReadyServer := precompute(clientTransPub, &serverTransSec)
+	afterReadyClient := precompute(serverTransPub, &clientTransSec)
+
+	md := wire.Metadata{
+		{Name: []byte("Socket-Type"), Value: []byte("ROUTER")},
+		{Name: []byte("Identity"), Value: bytes.Repeat([]byte{0x77}, 8)},
+	}
+	cmd, err := encodeReady(md, afterReadyServer, 1, rand.Reader)
+	if err != nil {
+		t.Fatalf("encodeReady: %v", err)
+	}
+	if cmd.Name != readyCommandName {
+		t.Fatalf("cmd.Name = %q, want %q", cmd.Name, readyCommandName)
+	}
+	got, err := parseReady(cmd, afterReadyClient)
+	if err != nil {
+		t.Fatalf("parseReady: %v", err)
+	}
+	if len(got) != len(md) ||
+		!bytes.Equal(got[0].Name, md[0].Name) ||
+		!bytes.Equal(got[1].Value, md[1].Value) {
+		t.Fatalf("metadata differs after round-trip: got=%+v want=%+v", got, md)
+	}
+}
+
+func TestEncodeReadyEmptyMetadata(t *testing.T) {
+	clientTransPub, clientTransSec := makePair(t)
+	serverTransPub, serverTransSec := makePair(t)
+	afterReadyServer := precompute(clientTransPub, &serverTransSec)
+	afterReadyClient := precompute(serverTransPub, &clientTransSec)
+
+	cmd, err := encodeReady(nil, afterReadyServer, 1, rand.Reader)
+	if err != nil {
+		t.Fatalf("encodeReady(nil): %v", err)
+	}
+	got, err := parseReady(cmd, afterReadyClient)
+	if err != nil {
+		t.Fatalf("parseReady: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("metadata = %+v, want empty", got)
+	}
+}
+
+func TestParseReadyRejectsWrongName(t *testing.T) {
+	_, sk := makePair(t)
+	shared := precompute(PublicKey{1}, &sk)
+	bad := wire.Command{Name: "WELCOME", Data: make([]byte, 24)}
+	if _, err := parseReady(bad, shared); !errors.Is(err, ErrMalformedReady) {
+		t.Fatalf("err = %v, want ErrMalformedReady", err)
+	}
+}
+
+func TestParseReadyRejectsTooSmall(t *testing.T) {
+	_, sk := makePair(t)
+	shared := precompute(PublicKey{1}, &sk)
+	bad := wire.Command{Name: readyCommandName, Data: []byte{0x01}}
+	if _, err := parseReady(bad, shared); !errors.Is(err, ErrMalformedReady) {
+		t.Fatalf("err = %v, want ErrMalformedReady", err)
+	}
+}
+
+func TestParseReadyRejectsTamperedBox(t *testing.T) {
+	clientTransPub, clientTransSec := makePair(t)
+	serverTransPub, serverTransSec := makePair(t)
+	afterReadyServer := precompute(clientTransPub, &serverTransSec)
+	afterReadyClient := precompute(serverTransPub, &clientTransSec)
+
+	cmd, _ := encodeReady(nil, afterReadyServer, 1, rand.Reader)
+	cmd.Data[len(cmd.Data)-1] ^= 0x01
+	if _, err := parseReady(cmd, afterReadyClient); !errors.Is(err, ErrBoxOpen) {
+		t.Fatalf("err = %v, want ErrBoxOpen", err)
+	}
+}

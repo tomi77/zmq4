@@ -378,3 +378,53 @@ func parseInitiate(cmd wire.Command, sharedKey *SharedKey) (cookie, vouch, Publi
 	}
 	return ck, v, clientLongPub, md, nil
 }
+
+// readyMinBodyLen = 8-byte short-nonce + 16-byte box overhead.
+const readyMinBodyLen = 8 + 16
+
+// encodeReady builds a READY command. sharedKey is
+// precompute(clientTransPub, serverTransSec) = s' × C'.
+func encodeReady(metadata wire.Metadata, sharedKey *SharedKey, nonce uint64, rng io.Reader) (wire.Command, error) {
+	_ = rng // counter short-nonce; no random bytes.
+
+	mdEnc := wire.EncodeMetadata(metadata)
+	body := make([]byte, 8+16+len(mdEnc))
+	binary.BigEndian.PutUint64(body[:8], nonce)
+
+	var nacl [24]byte
+	copy(nacl[:16], readyNoncePrefix[:])
+	binary.BigEndian.PutUint64(nacl[16:], nonce)
+
+	out := box.SealAfterPrecomputation(nil, mdEnc, &nacl, (*[32]byte)(sharedKey))
+	if len(out) != len(mdEnc)+16 {
+		return wire.Command{}, fmt.Errorf("curve: internal: ready-box len=%d want %d", len(out), len(mdEnc)+16)
+	}
+	copy(body[8:], out)
+	return wire.Command{Name: readyCommandName, Data: body}, nil
+}
+
+// parseReady inverts encodeReady. sharedKey is
+// precompute(serverTransPub, clientTransSec) = c' × S'. The returned
+// Metadata aliases the decrypted plaintext; callers MUST clone via
+// seccommon.CloneMetadata to retain it.
+func parseReady(cmd wire.Command, sharedKey *SharedKey) (wire.Metadata, error) {
+	if cmd.Name != readyCommandName {
+		return nil, fmt.Errorf("%w: command name %q", ErrMalformedReady, cmd.Name)
+	}
+	if len(cmd.Data) < readyMinBodyLen {
+		return nil, fmt.Errorf("%w: body size %d, want ≥ %d", ErrMalformedReady, len(cmd.Data), readyMinBodyLen)
+	}
+	var nacl [24]byte
+	copy(nacl[:16], readyNoncePrefix[:])
+	copy(nacl[16:], cmd.Data[:8])
+
+	plain, ok := box.OpenAfterPrecomputation(nil, cmd.Data[8:], &nacl, (*[32]byte)(sharedKey))
+	if !ok {
+		return nil, fmt.Errorf("%w: ready", ErrBoxOpen)
+	}
+	md, perr := wire.ParseMetadata(plain)
+	if perr != nil {
+		return nil, fmt.Errorf("%w: %v", ErrMalformedReady, perr)
+	}
+	return md, nil
+}
