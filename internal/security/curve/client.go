@@ -137,3 +137,74 @@ func (c *ClientState) Start() (wire.Command, error) {
 	c.started = true
 	return hello, nil
 }
+
+// Receive consumes one peer command and advances the state machine.
+func (c *ClientState) Receive(cmd wire.Command) (out *wire.Command, done bool, err error) {
+	switch {
+	case c.closed:
+		return nil, false, security.ErrClosed
+	case c.failed:
+		return nil, false, ErrAlreadyFailed
+	case !c.started:
+		c.failed = true
+		return nil, false, ErrNotStarted
+	case c.done:
+		c.failed = true
+		return nil, false, ErrAlreadyDone
+	}
+
+	if !c.welcomeReceived {
+		switch cmd.Name {
+		case welcomeCommandName:
+			return c.handleWelcome(cmd)
+		case wire.ErrorCommandName:
+			return nil, false, c.failPeerError(cmd)
+		}
+		c.failed = true
+		return nil, false, fmt.Errorf("%w: %q (expected WELCOME)", ErrUnexpectedCommand, cmd.Name)
+	}
+
+	// AWAIT_READY — fleshed out in Task 16.
+	c.failed = true
+	return nil, false, fmt.Errorf("%w: %q (expected READY)", ErrUnexpectedCommand, cmd.Name)
+}
+
+func (c *ClientState) handleWelcome(cmd wire.Command) (*wire.Command, bool, error) {
+	serverTransPub, ck, perr := parseWelcome(cmd, c.handshakeShared)
+	if perr != nil {
+		c.failed = true
+		return nil, false, perr
+	}
+	c.afterReady = precompute(serverTransPub, &c.transSec) // c' × S'
+
+	v, vErr := encodeVouch(c.transPub, c.serverPub, c.vouchShared, c.rand)
+	if vErr != nil {
+		c.failed = true
+		return nil, false, fmt.Errorf("curve: encode vouch: %w", vErr)
+	}
+	// vouchShared is no longer needed; zero immediately so a later bug
+	// cannot re-derive the long-term × long-term key.
+	c.vouchShared.Zero()
+	c.vouchShared = nil
+
+	initiate, iErr := encodeInitiate(ck, v, c.ourLongPub, c.local, c.afterReady, c.initiateNonce, c.rand)
+	if iErr != nil {
+		c.failed = true
+		return nil, false, fmt.Errorf("curve: encode INITIATE: %w", iErr)
+	}
+	c.initiateNonce++
+	c.welcomeReceived = true
+	return &initiate, false, nil
+}
+
+// failPeerError marks the state failed and wraps the peer's ERROR
+// reason. Reason bytes are returned as-received; callers SHOULD treat
+// them as untrusted.
+func (c *ClientState) failPeerError(cmd wire.Command) error {
+	c.failed = true
+	ec, perr := wire.ParseError(cmd)
+	if perr != nil {
+		return fmt.Errorf("%w: malformed ERROR: %v", ErrPeerError, perr)
+	}
+	return fmt.Errorf("%w: %s", ErrPeerError, ec.Reason)
+}

@@ -147,6 +147,142 @@ func TestClientStartFailsWhenRandFails(t *testing.T) {
 	}
 }
 
+func TestClientReceiveWelcomeEmitsValidInitiate(t *testing.T) {
+	clientLongPub, clientLongSec := makePair(t)
+	serverLongPub, serverLongSec := makePair(t)
+	mdC := wire.Metadata{
+		{Name: []byte("Socket-Type"), Value: []byte("DEALER")},
+	}
+	c, err := NewClient(ClientOptions{
+		ServerKey:     serverLongPub,
+		OurPublicKey:  clientLongPub,
+		OurSecretKey:  &clientLongSec,
+		LocalMetadata: mdC,
+	})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	hello, err := c.Start()
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	// Drive the server side manually with codec primitives so we can
+	// build a valid WELCOME without depending on ServerState yet.
+	var clientTransPub PublicKey
+	copy(clientTransPub[:], hello.Data[2+72:2+72+32])
+
+	helloOpenShared := precompute(clientTransPub, &serverLongSec) // s × C'
+	if _, err := parseHello(hello, helloOpenShared); err != nil {
+		t.Fatalf("server-side parseHello: %v", err)
+	}
+
+	serverTransPub, serverTransSec := makePair(t)
+	var cookieKey SecretKey
+	if _, err := rand.Read(cookieKey[:]); err != nil {
+		t.Fatalf("rand cookieKey: %v", err)
+	}
+	ck, err := sealCookie(clientTransPub, serverTransSec, &cookieKey, rand.Reader)
+	if err != nil {
+		t.Fatalf("sealCookie: %v", err)
+	}
+	welcomeShared := precompute(clientTransPub, &serverLongSec) // s × C'
+	welcome, err := encodeWelcome(serverTransPub, ck, welcomeShared, rand.Reader)
+	if err != nil {
+		t.Fatalf("encodeWelcome: %v", err)
+	}
+
+	out, done, err := c.Receive(welcome)
+	if err != nil {
+		t.Fatalf("Receive(WELCOME): %v", err)
+	}
+	if done {
+		t.Fatalf("done=true after WELCOME, want false")
+	}
+	if out == nil || out.Name != initiateCommandName {
+		t.Fatalf("out = %+v, want INITIATE", out)
+	}
+
+	// Open INITIATE with the server's afterReady = s' × C'.
+	afterReadyServer := precompute(clientTransPub, &serverTransSec)
+	gotCookie, gotVouch, gotLongPub, gotMeta, err := parseInitiate(*out, afterReadyServer)
+	if err != nil {
+		t.Fatalf("parseInitiate: %v", err)
+	}
+	if gotCookie != ck {
+		t.Fatalf("cookie not echoed verbatim")
+	}
+	if gotLongPub != clientLongPub {
+		t.Fatalf("client long pub = %x, want %x", gotLongPub, clientLongPub)
+	}
+	// Vouch authenticates (C' || S) under c × S; we open it via box.Open.
+	gotC1, gotS, err := openVouch(gotVouch, clientLongPub, &serverLongSec)
+	if err != nil {
+		t.Fatalf("openVouch: %v", err)
+	}
+	if gotC1 != clientTransPub {
+		t.Fatalf("vouch C' = %x, want %x", gotC1, clientTransPub)
+	}
+	if gotS != serverLongPub {
+		t.Fatalf("vouch S = %x, want %x", gotS, serverLongPub)
+	}
+	if v, ok := gotMeta.Get("Socket-Type"); !ok || string(v) != "DEALER" {
+		t.Fatalf("INITIATE Socket-Type = %q, want DEALER", v)
+	}
+}
+
+func TestClientReceiveBeforeStart(t *testing.T) {
+	clientLongPub, clientLongSec := makePair(t)
+	serverLongPub, _ := makePair(t)
+	c, _ := NewClient(ClientOptions{
+		ServerKey: serverLongPub, OurPublicKey: clientLongPub, OurSecretKey: &clientLongSec,
+	})
+	if _, _, err := c.Receive(wire.Command{Name: welcomeCommandName}); !errors.Is(err, ErrNotStarted) {
+		t.Fatalf("Receive before Start = %v, want ErrNotStarted", err)
+	}
+}
+
+func TestClientReceiveMalformedWelcome(t *testing.T) {
+	clientLongPub, clientLongSec := makePair(t)
+	serverLongPub, _ := makePair(t)
+	c, _ := NewClient(ClientOptions{
+		ServerKey: serverLongPub, OurPublicKey: clientLongPub, OurSecretKey: &clientLongSec,
+	})
+	if _, err := c.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	bad := wire.Command{Name: welcomeCommandName, Data: []byte{0x01}}
+	if _, _, err := c.Receive(bad); !errors.Is(err, ErrMalformedWelcome) {
+		t.Fatalf("err = %v, want ErrMalformedWelcome", err)
+	}
+}
+
+func TestClientReceiveTamperedWelcome(t *testing.T) {
+	// Build a real WELCOME, flip a bit, expect ErrBoxOpen.
+	clientLongPub, clientLongSec := makePair(t)
+	serverLongPub, serverLongSec := makePair(t)
+	c, _ := NewClient(ClientOptions{
+		ServerKey: serverLongPub, OurPublicKey: clientLongPub, OurSecretKey: &clientLongSec,
+	})
+	hello, _ := c.Start()
+	var clientTransPub PublicKey
+	copy(clientTransPub[:], hello.Data[2+72:2+72+32])
+
+	serverTransPub, serverTransSec := makePair(t)
+	var cookieKey SecretKey
+	if _, err := rand.Read(cookieKey[:]); err != nil {
+		t.Fatalf("rand cookieKey: %v", err)
+	}
+	ck, _ := sealCookie(clientTransPub, serverTransSec, &cookieKey, rand.Reader)
+	welcomeShared := precompute(clientTransPub, &serverLongSec)
+	welcome, _ := encodeWelcome(serverTransPub, ck, welcomeShared, rand.Reader)
+
+	welcome.Data[len(welcome.Data)-1] ^= 0x01
+	if _, _, err := c.Receive(welcome); !errors.Is(err, ErrBoxOpen) {
+		t.Fatalf("err = %v, want ErrBoxOpen", err)
+	}
+}
+
 // silence unused-import warning if a refactor removes references.
 var _ = bytes.Equal
 var _ wire.Frame
