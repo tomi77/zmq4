@@ -85,24 +85,3 @@ func parseWelcome(cmd wire.Command) error {
 	}
 	return nil
 }
-
-// sanitizeReason makes s safe to put inside an ERROR command body
-// (RFC 37 §3 ABNF: error-reason = OCTET 0*255VCHAR). Replaces any
-// non-VCHAR byte with '?', then truncates to 255 bytes.
-//
-// VCHAR is %x21..%x7E (printable ASCII excluding space).
-func sanitizeReason(s string) string {
-	if s == "" {
-		return ""
-	}
-	b := []byte(s)
-	for i, c := range b {
-		if c < 0x21 || c > 0x7E {
-			b[i] = '?'
-		}
-	}
-	if len(b) > 255 {
-		b = b[:255]
-	}
-	return string(b)
-}

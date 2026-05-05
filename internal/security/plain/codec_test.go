@@ -2,7 +2,6 @@ package plain
 
 import (
 	"bytes"
-	"strings"
 	"testing"
 
 	"github.com/tomi77/zmq4/internal/wire"
@@ -96,34 +95,5 @@ func TestParseWelcomeRejectsWrongName(t *testing.T) {
 	cmd := wire.Command{Name: "READY"}
 	if err := parseWelcome(cmd); err == nil {
 		t.Fatalf("parseWelcome(name=READY): err=nil, want non-nil")
-	}
-}
-
-func TestSanitizeReasonReplacesNonVCHAR(t *testing.T) {
-	// VCHAR = 0x21..0x7E. Inputs include space (0x20), tab, newline,
-	// nul, DEL, and a high-bit byte — all non-VCHAR.
-	in := "ok\nhuh\x00\tend\x7F\xFF "
-	out := sanitizeReason(in)
-	for i, c := range []byte(out) {
-		if c < 0x21 || c > 0x7E {
-			t.Fatalf("sanitizeReason left non-VCHAR byte %#x at index %d in %q", c, i, out)
-		}
-	}
-	if len(out) != len(in) {
-		t.Fatalf("sanitizeReason length = %d, want %d", len(out), len(in))
-	}
-}
-
-func TestSanitizeReasonTruncatesTo255(t *testing.T) {
-	in := strings.Repeat("a", 300)
-	out := sanitizeReason(in)
-	if len(out) != 255 {
-		t.Fatalf("len = %d, want 255", len(out))
-	}
-}
-
-func TestSanitizeReasonEmpty(t *testing.T) {
-	if out := sanitizeReason(""); out != "" {
-		t.Fatalf("sanitizeReason(\"\") = %q, want \"\"", out)
 	}
 }

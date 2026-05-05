@@ -1,10 +1,12 @@
 package plain
 
 import (
+	"bytes"
 	"errors"
 	"strings"
 	"testing"
 
+	"github.com/tomi77/zmq4/internal/security"
 	"github.com/tomi77/zmq4/internal/wire"
 )
 
@@ -269,4 +271,61 @@ func TestServerReceiveAfterDone(t *testing.T) {
 	if !errors.Is(err, ErrAlreadyDone) {
 		t.Fatalf("err = %v, want ErrAlreadyDone", err)
 	}
+}
+
+func TestPlainServerWrapBeforeDoneReturnsErrNotDone(t *testing.T) {
+	s := NewServer(acceptAll, nil)
+	f := wire.Frame{Kind: wire.FrameMessage, Body: []byte("x")}
+	if _, err := s.Wrap(f); !errors.Is(err, security.ErrNotDone) {
+		t.Fatalf("Wrap before Done = %v, want security.ErrNotDone", err)
+	}
+}
+
+func TestPlainServerUnwrapBeforeDoneReturnsErrNotDone(t *testing.T) {
+	s := NewServer(acceptAll, nil)
+	f := wire.Frame{Kind: wire.FrameMessage, Body: []byte("x")}
+	if _, err := s.Unwrap(f); !errors.Is(err, security.ErrNotDone) {
+		t.Fatalf("Unwrap before Done = %v, want security.ErrNotDone", err)
+	}
+}
+
+func TestPlainServerWrapPassthrough(t *testing.T) {
+	s := newPlainServerDone(t)
+	want := wire.Frame{Kind: wire.FrameMessage, More: true, Body: []byte("payload")}
+	got, err := s.Wrap(want)
+	if err != nil {
+		t.Fatalf("Wrap: %v", err)
+	}
+	if got.Kind != want.Kind || got.More != want.More || !bytes.Equal(got.Body, want.Body) {
+		t.Fatalf("Wrap mutated frame: got=%+v want=%+v", got, want)
+	}
+}
+
+func TestPlainServerUnwrapPassthrough(t *testing.T) {
+	s := newPlainServerDone(t)
+	want := wire.Frame{Kind: wire.FrameMessage, More: false, Body: []byte("payload")}
+	got, err := s.Unwrap(want)
+	if err != nil {
+		t.Fatalf("Unwrap: %v", err)
+	}
+	if got.Kind != want.Kind || got.More != want.More || !bytes.Equal(got.Body, want.Body) {
+		t.Fatalf("Unwrap mutated frame: got=%+v want=%+v", got, want)
+	}
+}
+
+func newPlainServerDone(t *testing.T) *ServerState {
+	t.Helper()
+	s := NewServer(acceptAll, nil)
+	hello, _ := encodeHello(helloBody{Username: []byte("u"), Password: []byte("p")})
+	if _, _, err := s.Receive(hello); err != nil {
+		t.Fatalf("Receive(HELLO): %v", err)
+	}
+	initiate := wire.Command{Name: initiateCommandName, Data: wire.EncodeMetadata(nil)}
+	if _, _, err := s.Receive(initiate); err != nil {
+		t.Fatalf("Receive(INITIATE): %v", err)
+	}
+	if !s.Done() {
+		t.Fatalf("not done")
+	}
+	return s
 }

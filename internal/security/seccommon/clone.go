@@ -1,11 +1,11 @@
-package metaclone
+package seccommon
 
 import "github.com/tomi77/zmq4/internal/wire"
 
-// Clone returns a deep copy of src: a fresh Metadata slice plus fresh
-// Name/Value backing arrays for each property. The result aliases none
-// of src's backing storage. Empty/nil input returns nil.
-func Clone(src wire.Metadata) wire.Metadata {
+// CloneMetadata returns a deep copy of src: a fresh Metadata slice plus
+// fresh Name/Value backing arrays for each property. The result aliases
+// none of src's backing storage. Empty/nil input returns nil.
+func CloneMetadata(src wire.Metadata) wire.Metadata {
 	if len(src) == 0 {
 		return nil
 	}

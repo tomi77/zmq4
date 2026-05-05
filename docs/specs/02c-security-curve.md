@@ -1,6 +1,6 @@
 # 02c — CURVE security mechanism (Phase 2c)
 
-> **Status:** draft, awaiting implementation.
+> **Status:** implemented, frozen for F4+.
 > **Author:** Tomasz Rup
 > **Date:** 2026-05-04
 > **Layer:** L2 — `internal/security/curve` + cross-mechanism extraction
@@ -253,11 +253,15 @@ type Mechanism interface {
     // (linked via MORE) are wrapped one frame at a time: each frame
     // becomes its own MESSAGE command with its own nonce.
     //
-    // The returned Frame's Body is freshly allocated and owned by the
-    // caller. Wrap consumes f synchronously: it MUST read whatever it
-    // needs from f.Body before returning and MUST NOT retain or mutate
-    // any reference to f. The caller is therefore free to reuse, mutate,
-    // or release f.Body the instant Wrap returns.
+    // For pass-through mechanisms (NULL, PLAIN), the returned Frame
+    // aliases f. For mechanisms that perform encapsulation (CURVE), the
+    // returned Frame's Body is freshly allocated and independent of f.
+    // In all cases the State retains no reference to f. Wrap consumes f
+    // synchronously: it MUST read whatever it needs from f.Body before
+    // returning and MUST NOT retain or mutate any reference to f. The
+    // caller is therefore free to reuse, mutate, or release f.Body the
+    // instant Wrap returns; the only constraint is that the caller must
+    // not mutate f.Body while the returned Frame is still in use.
     Wrap(f wire.Frame) (wire.Frame, error)
 
     // Unwrap inverts Wrap.
@@ -270,17 +274,24 @@ type Mechanism interface {
     //               the inner flags byte (bit 0), and Body is the
     //               decrypted payload.
     //
-    // The returned Frame's Body is freshly allocated and independent of
-    // f. Unwrap consumes f synchronously: same lifetime rule as Wrap —
-    // the caller may reuse f.Body immediately upon return.
+    // For pass-through mechanisms (NULL, PLAIN), the returned Frame
+    // aliases f. For mechanisms that perform encapsulation (CURVE), the
+    // returned Frame's Body is freshly allocated and independent of f.
+    // In all cases the State retains no reference to f. Unwrap consumes
+    // f synchronously: it MUST read whatever it needs from f.Body before
+    // returning and MUST NOT retain or mutate any reference to f. The
+    // caller is therefore free to reuse, mutate, or release f.Body the
+    // instant Unwrap returns; the only constraint is that the caller
+    // must not mutate f.Body while the returned Frame is still in use.
     Unwrap(f wire.Frame) (wire.Frame, error)
 
     // Done reports whether the handshake completed successfully.
     Done() bool
 
     // PeerMetadata returns the metadata advertised by the peer in its
-    // handshake. Valid only after Done(). The returned Metadata aliases
-    // an internal buffer; callers MUST NOT mutate it.
+    // handshake. Valid only after Done(). The returned slice is owned
+    // by the Mechanism and remains valid until the Mechanism is
+    // discarded; callers MUST NOT mutate it.
     PeerMetadata() wire.Metadata
 }
 
@@ -902,8 +913,8 @@ so the test thresholds are reviewable.
 
 | Operation | Expected allocations | Notes |
 |-----------|---------------------|-------|
-| `ClientState.Wrap(f)` | 2 | one `[]byte` for `wire.Command.Data` (short-nonce + box ciphertext), one `[]byte` for the returned `wire.Frame.Body` (the encoded MESSAGE command). |
-| `ClientState.Unwrap(f)` | 1 | one `[]byte` for the decrypted payload, returned as `wire.Frame.Body`. |
+| `ClientState.Wrap(f)` | 3 (per `testing.AllocsPerRun`) | NaCl plaintext buffer + box ciphertext + encoded MESSAGE wire.Frame body. |
+| `ClientState.Unwrap(f)` | 2 (per `testing.AllocsPerRun`) | parsed Command + decrypted payload returned as `wire.Frame.Body`. |
 | `ServerState.Wrap` / `Unwrap` | identical to client | symmetric path. |
 | `Start` (client) | ~3 | transient keypair (1), handshakeShared+vouchShared precomputed key buffers (2). |
 | `Receive(WELCOME)` (client) | ~3 | afterReady precomputed key buffer (1), INITIATE ciphertext (1), encoded INITIATE command bytes (1). |
@@ -1258,25 +1269,25 @@ pinned via `testing.AllocsPerRun` in a separate
 
 ### 8.7 Done criteria
 
-- [ ] All unit tests pass.
-- [ ] `Mechanism` / `ClientMechanism` conformance tests pass for all
+- [x] All unit tests pass.
+- [x] `Mechanism` / `ClientMechanism` conformance tests pass for all
       five concrete types.
-- [ ] All four property tests pass 1000 iterations each.
-- [ ] All 10 vector tests pass with byte equality under the pinned seed.
-- [ ] `go vet ./...` clean.
-- [ ] `staticcheck ./...` clean.
-- [ ] `modernize -fix ./...` clean (no diff). [Per repository convention,
+- [x] All four property tests pass 1000 iterations each.
+- [x] All 10 vector tests pass with byte equality under the pinned seed.
+- [x] `go vet ./...` clean.
+- [x] `staticcheck ./...` clean.
+- [x] `modernize -fix ./...` clean (no diff). [Per repository convention,
       run before tagging phase end.]
-- [ ] `go test -race ./internal/security/curve/...` clean.
-- [ ] `go test -race ./internal/security/...` clean (root package + the
+- [x] `go test -race ./internal/security/curve/...` clean.
+- [x] `go test -race ./internal/security/...` clean (root package + the
       conformance tests across null/plain/curve).
-- [ ] Benchmark allocs/op pinned via `testing.AllocsPerRun` for client
+- [x] Benchmark allocs/op pinned via `testing.AllocsPerRun` for client
       handshake, server handshake, Wrap, and Unwrap.
 - [ ] Phase tagged `phase-2c-curve-complete` only after all of the above.
-- [ ] `00-meta-overview.md` §4 updated: F2c row → "Complete".
-- [ ] `00-meta-overview.md` §7 updated: external dependencies row
+- [x] `00-meta-overview.md` §4 updated: F2c row → "Complete".
+- [x] `00-meta-overview.md` §7 updated: external dependencies row
       mentions both `nacl/box` and `nacl/secretbox` actually used.
-- [ ] F2a/F2b amendment note added to `00-meta-overview.md` (under
+- [x] F2a/F2b amendment note added to `00-meta-overview.md` (under
       §4, alongside the existing "F1 amendments" subsection).
 
 ## 9. Open questions

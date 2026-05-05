@@ -3,7 +3,8 @@ package plain
 import (
 	"fmt"
 
-	"github.com/tomi77/zmq4/internal/security/metaclone"
+	"github.com/tomi77/zmq4/internal/security"
+	"github.com/tomi77/zmq4/internal/security/seccommon"
 	"github.com/tomi77/zmq4/internal/wire"
 )
 
@@ -41,6 +42,24 @@ func (s *ServerState) Done() bool { return s.done && !s.failed }
 // PeerMetadata returns the metadata the client sent in INITIATE. Valid
 // only after Receive returned done=true.
 func (s *ServerState) PeerMetadata() wire.Metadata { return s.peer }
+
+// Wrap returns f unchanged. PLAIN does no traffic encapsulation.
+// Returns security.ErrNotDone if called before the handshake completes.
+func (s *ServerState) Wrap(f wire.Frame) (wire.Frame, error) {
+	if !s.Done() {
+		return wire.Frame{}, security.ErrNotDone
+	}
+	return f, nil
+}
+
+// Unwrap returns f unchanged. PLAIN does no traffic encapsulation.
+// Returns security.ErrNotDone if called before the handshake completes.
+func (s *ServerState) Unwrap(f wire.Frame) (wire.Frame, error) {
+	if !s.Done() {
+		return wire.Frame{}, security.ErrNotDone
+	}
+	return f, nil
+}
 
 // Receive consumes one peer command and advances the state machine.
 // See spec §4.2 for the contract.
@@ -83,7 +102,7 @@ func (s *ServerState) Receive(cmd wire.Command) (out *wire.Command, done bool, e
 			s.failed = true
 			return nil, false, fmt.Errorf("%w: %v", ErrMalformedInitiate, perr)
 		}
-		s.peer = metaclone.Clone(md)
+		s.peer = seccommon.CloneMetadata(md)
 		ready, encErr := wire.ReadyCommand{Metadata: s.local}.Encode()
 		if encErr != nil {
 			s.failed = true
@@ -103,7 +122,7 @@ func (s *ServerState) Receive(cmd wire.Command) (out *wire.Command, done bool, e
 // returned out command before closing the connection.
 func (s *ServerState) failAuthRejected(authErr error) (*wire.Command, bool, error) {
 	s.failed = true
-	reason := sanitizeReason(authErr.Error())
+	reason := seccommon.SanitizeReason(authErr.Error())
 	errCmd, encErr := wire.ErrorCommand{Reason: reason}.Encode()
 	if encErr != nil {
 		return nil, false, fmt.Errorf("plain: encode ERROR: %w", encErr)

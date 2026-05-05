@@ -1,4 +1,4 @@
-package metaclone
+package seccommon
 
 import (
 	"bytes"
@@ -7,24 +7,23 @@ import (
 	"github.com/tomi77/zmq4/internal/wire"
 )
 
-func TestCloneEmpty(t *testing.T) {
-	if got := Clone(nil); got != nil {
-		t.Fatalf("Clone(nil) = %+v, want nil", got)
+func TestCloneMetadataEmpty(t *testing.T) {
+	if got := CloneMetadata(nil); got != nil {
+		t.Fatalf("CloneMetadata(nil) = %+v, want nil", got)
 	}
-	if got := Clone(wire.Metadata{}); got != nil {
-		t.Fatalf("Clone(empty) = %+v, want nil", got)
+	if got := CloneMetadata(wire.Metadata{}); got != nil {
+		t.Fatalf("CloneMetadata(empty) = %+v, want nil", got)
 	}
 }
 
-func TestCloneIndependentBuffers(t *testing.T) {
+func TestCloneMetadataIndependentBuffers(t *testing.T) {
 	name := []byte("Socket-Type")
 	value := []byte("REQ")
 	src := wire.Metadata{
 		{Name: name, Value: value},
 	}
-	dst := Clone(src)
+	dst := CloneMetadata(src)
 
-	// Mutate the source buffers.
 	for i := range name {
 		name[i] = 0xFF
 	}

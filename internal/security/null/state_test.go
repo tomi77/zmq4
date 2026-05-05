@@ -1,10 +1,12 @@
 package null
 
 import (
+	"bytes"
 	"errors"
 	"strings"
 	"testing"
 
+	"github.com/tomi77/zmq4/internal/security"
 	"github.com/tomi77/zmq4/internal/wire"
 )
 
@@ -283,4 +285,80 @@ func TestPeerMetadataIndependentOfInputBuffer(t *testing.T) {
 	if string(pm[0].Value) != "DEALER" {
 		t.Fatalf("PeerMetadata[0].Value = %q, want DEALER (buffer aliasing?)", pm[0].Value)
 	}
+}
+
+func TestNullWrapBeforeDoneReturnsErrNotDone(t *testing.T) {
+	s := New(nil)
+	f := wire.Frame{Kind: wire.FrameMessage, Body: []byte("hi")}
+	if _, err := s.Wrap(f); !errors.Is(err, security.ErrNotDone) {
+		t.Fatalf("Wrap before Done = %v, want security.ErrNotDone", err)
+	}
+}
+
+func TestNullUnwrapBeforeDoneReturnsErrNotDone(t *testing.T) {
+	s := New(nil)
+	f := wire.Frame{Kind: wire.FrameMessage, Body: []byte("hi")}
+	if _, err := s.Unwrap(f); !errors.Is(err, security.ErrNotDone) {
+		t.Fatalf("Unwrap before Done = %v, want security.ErrNotDone", err)
+	}
+}
+
+func TestNullWrapPassthrough(t *testing.T) {
+	s := newDoneState(t)
+	want := wire.Frame{Kind: wire.FrameMessage, More: true, Body: []byte("payload")}
+	got, err := s.Wrap(want)
+	if err != nil {
+		t.Fatalf("Wrap: %v", err)
+	}
+	if got.Kind != want.Kind || got.More != want.More || !bytes.Equal(got.Body, want.Body) {
+		t.Fatalf("Wrap mutated frame: got=%+v want=%+v", got, want)
+	}
+}
+
+func TestNullWrapAliasesInputBody(t *testing.T) {
+	s := newDoneState(t)
+	body := []byte("payload")
+	in := wire.Frame{Kind: wire.FrameMessage, Body: body}
+	got, err := s.Wrap(in)
+	if err != nil {
+		t.Fatalf("Wrap: %v", err)
+	}
+	// NULL is pass-through: returned Body must alias the input.
+	if len(got.Body) > 0 && len(body) > 0 && &got.Body[0] != &body[0] {
+		t.Fatalf("Wrap allocated a new buffer; pass-through must alias input")
+	}
+}
+
+func TestNullUnwrapPassthrough(t *testing.T) {
+	s := newDoneState(t)
+	want := wire.Frame{Kind: wire.FrameMessage, More: false, Body: []byte("payload")}
+	got, err := s.Unwrap(want)
+	if err != nil {
+		t.Fatalf("Unwrap: %v", err)
+	}
+	if got.Kind != want.Kind || got.More != want.More || !bytes.Equal(got.Body, want.Body) {
+		t.Fatalf("Unwrap mutated frame: got=%+v want=%+v", got, want)
+	}
+}
+
+// newDoneState drives the NULL handshake to completion using a paired
+// peer-side State so the test does not have to hand-craft READY bytes.
+// Helper for the Wrap/Unwrap tests above.
+func newDoneState(t *testing.T) *State {
+	t.Helper()
+	a := New(nil)
+	if _, err := a.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	peerReady, err := wire.ReadyCommand{}.Encode()
+	if err != nil {
+		t.Fatalf("encode peer READY: %v", err)
+	}
+	if _, _, err := a.Receive(peerReady); err != nil {
+		t.Fatalf("Receive: %v", err)
+	}
+	if !a.Done() {
+		t.Fatalf("not done after Receive(READY)")
+	}
+	return a
 }
