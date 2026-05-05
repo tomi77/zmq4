@@ -1,11 +1,13 @@
 package curve
 
 import (
+	"crypto/rand"
 	"encoding/binary"
 	"fmt"
 	"io"
 
 	"golang.org/x/crypto/nacl/box"
+	"golang.org/x/crypto/nacl/secretbox"
 
 	"github.com/tomi77/zmq4/internal/wire"
 )
@@ -119,4 +121,126 @@ func parseHello(cmd wire.Command, sharedKey *SharedKey) (PublicKey, error) {
 		return PublicKey{}, fmt.Errorf("%w: hello-box", ErrBoxOpen)
 	}
 	return clientTransPub, nil
+}
+
+// WELCOME wire layout (RFC 26 §5.3):
+//
+//	welcome-nonce        16 B (random long-nonce)
+//	welcome-box         144 B (= 32 + 96 + 16 overhead)
+//	  plaintext: S' (32) || cookie (96)
+//
+// Total body: 160 B.
+const welcomeBodyLen = 16 + 144
+
+// Cookie wire layout (RFC 26 §5):
+//
+//	cookie-nonce         16 B (random long-nonce)
+//	secretbox            80 B (= 64 + 16 overhead)
+//	  plaintext: C' (32) || s' (32)
+//
+// Total cookie: 96 B.
+type cookie [96]byte
+
+// sealCookie produces an opaque 96-byte cookie that the client echoes
+// back inside INITIATE. The cookie binds (C', s') to the per-handshake
+// cookieKey so the server need not retain handshake state between
+// WELCOME and INITIATE.
+func sealCookie(clientTransPub PublicKey, serverTransSec SecretKey, cookieKey *SecretKey, rng io.Reader) (cookie, error) {
+	if rng == nil {
+		rng = rand.Reader
+	}
+	var c cookie
+	if _, err := io.ReadFull(rng, c[:16]); err != nil {
+		return cookie{}, fmt.Errorf("%w: %v", ErrCryptoRand, err)
+	}
+	var nacl [24]byte
+	copy(nacl[:8], cookieNoncePrefix[:])
+	copy(nacl[8:], c[:16])
+
+	var plaintext [64]byte
+	copy(plaintext[:32], clientTransPub[:])
+	copy(plaintext[32:], serverTransSec[:])
+
+	out := secretbox.Seal(nil, plaintext[:], &nacl, (*[32]byte)(cookieKey))
+	if len(out) != 80 {
+		return cookie{}, fmt.Errorf("curve: internal: cookie box len=%d want 80", len(out))
+	}
+	copy(c[16:], out)
+	return c, nil
+}
+
+// openCookie inverts sealCookie. Returns ErrBoxOpen if the secretbox
+// auth tag does not verify (wrong key, tampered ciphertext).
+func openCookie(c cookie, cookieKey *SecretKey) (PublicKey, SecretKey, error) {
+	var nacl [24]byte
+	copy(nacl[:8], cookieNoncePrefix[:])
+	copy(nacl[8:], c[:16])
+
+	plain, ok := secretbox.Open(nil, c[16:], &nacl, (*[32]byte)(cookieKey))
+	if !ok {
+		return PublicKey{}, SecretKey{}, fmt.Errorf("%w: cookie", ErrBoxOpen)
+	}
+	if len(plain) != 64 {
+		return PublicKey{}, SecretKey{}, fmt.Errorf("curve: internal: cookie plaintext len=%d want 64", len(plain))
+	}
+	var pub PublicKey
+	var sec SecretKey
+	copy(pub[:], plain[:32])
+	copy(sec[:], plain[32:])
+	return pub, sec, nil
+}
+
+// encodeWelcome builds a WELCOME command. sharedKey is
+// precompute(clientTransPub, serverLongSec) = s × C'.
+func encodeWelcome(serverTransPub PublicKey, ck cookie, sharedKey *SharedKey, rng io.Reader) (wire.Command, error) {
+	if rng == nil {
+		rng = rand.Reader
+	}
+	data := make([]byte, welcomeBodyLen)
+	if _, err := io.ReadFull(rng, data[:16]); err != nil {
+		return wire.Command{}, fmt.Errorf("%w: %v", ErrCryptoRand, err)
+	}
+
+	var nacl [24]byte
+	copy(nacl[:8], welcomeNoncePrefix[:])
+	copy(nacl[8:], data[:16])
+
+	var plaintext [128]byte
+	copy(plaintext[:32], serverTransPub[:])
+	copy(plaintext[32:], ck[:])
+
+	out := box.SealAfterPrecomputation(nil, plaintext[:], &nacl, (*[32]byte)(sharedKey))
+	if len(out) != 144 {
+		return wire.Command{}, fmt.Errorf("curve: internal: welcome-box len=%d want 144", len(out))
+	}
+	copy(data[16:], out)
+
+	return wire.Command{Name: welcomeCommandName, Data: data}, nil
+}
+
+// parseWelcome inverts encodeWelcome. sharedKey is
+// precompute(serverLongPub, clientTransSec) = c' × S.
+func parseWelcome(cmd wire.Command, sharedKey *SharedKey) (PublicKey, cookie, error) {
+	if cmd.Name != welcomeCommandName {
+		return PublicKey{}, cookie{}, fmt.Errorf("%w: command name %q", ErrMalformedWelcome, cmd.Name)
+	}
+	if len(cmd.Data) != welcomeBodyLen {
+		return PublicKey{}, cookie{}, fmt.Errorf("%w: body size %d, want %d", ErrMalformedWelcome, len(cmd.Data), welcomeBodyLen)
+	}
+	var nacl [24]byte
+	copy(nacl[:8], welcomeNoncePrefix[:])
+	copy(nacl[8:], cmd.Data[:16])
+
+	plain, ok := box.OpenAfterPrecomputation(nil, cmd.Data[16:], &nacl, (*[32]byte)(sharedKey))
+	if !ok {
+		return PublicKey{}, cookie{}, fmt.Errorf("%w: welcome", ErrBoxOpen)
+	}
+	if len(plain) != 128 {
+		return PublicKey{}, cookie{}, fmt.Errorf("%w: welcome plaintext len=%d", ErrMalformedWelcome, len(plain))
+	}
+	var serverTransPub PublicKey
+	copy(serverTransPub[:], plain[:32])
+	var ck cookie
+	copy(ck[:], plain[32:])
+	return serverTransPub, ck, nil
 }

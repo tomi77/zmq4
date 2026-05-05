@@ -126,3 +126,126 @@ func TestEncodeHelloDoesNotConsumeRand(t *testing.T) {
 		t.Fatalf("encodeHello consumed %d bytes of rand, want 0 (counter short-nonce only)", used)
 	}
 }
+
+func TestEncodeWelcomeRoundTrip(t *testing.T) {
+	clientTransPub, clientTransSec := makePair(t)
+	serverLongPub, serverLongSec := makePair(t)
+
+	// In the real handshake the server has just generated s'/S' for this
+	// connection. We mimic that with a fresh pair.
+	serverTransPub, serverTransSec := makePair(t)
+
+	// Cookie key — fresh per ServerState.
+	var cookieKey SecretKey
+	if _, err := rand.Read(cookieKey[:]); err != nil {
+		t.Fatalf("rand cookieKey: %v", err)
+	}
+
+	cookie, err := sealCookie(clientTransPub, serverTransSec, &cookieKey, rand.Reader)
+	if err != nil {
+		t.Fatalf("sealCookie: %v", err)
+	}
+
+	welcomeShared := precompute(clientTransPub, &serverLongSec) // s × C'
+	openShared := precompute(serverLongPub, &clientTransSec)    // c' × S
+
+	cmd, err := encodeWelcome(serverTransPub, cookie, welcomeShared, rand.Reader)
+	if err != nil {
+		t.Fatalf("encodeWelcome: %v", err)
+	}
+	if cmd.Name != welcomeCommandName {
+		t.Fatalf("cmd.Name = %q, want %q", cmd.Name, welcomeCommandName)
+	}
+	gotS1, gotCookie, err := parseWelcome(cmd, openShared)
+	if err != nil {
+		t.Fatalf("parseWelcome: %v", err)
+	}
+	if gotS1 != serverTransPub {
+		t.Fatalf("S' = %x, want %x", gotS1, serverTransPub)
+	}
+	if gotCookie != cookie {
+		t.Fatalf("cookie differs after round-trip")
+	}
+
+	// Cookie opens to the original (C', s').
+	gotC1, gotSPrimeSec, err := openCookie(gotCookie, &cookieKey)
+	if err != nil {
+		t.Fatalf("openCookie: %v", err)
+	}
+	if gotC1 != clientTransPub {
+		t.Fatalf("cookie C' = %x, want %x", gotC1, clientTransPub)
+	}
+	if gotSPrimeSec != serverTransSec {
+		t.Fatalf("cookie s' differs from sealed value")
+	}
+}
+
+func TestParseWelcomeRejectsWrongName(t *testing.T) {
+	_, sk := makePair(t)
+	shared := precompute(PublicKey{1}, &sk)
+	bad := wire.Command{Name: "READY", Data: make([]byte, 160)}
+	if _, _, err := parseWelcome(bad, shared); !errors.Is(err, ErrMalformedWelcome) {
+		t.Fatalf("err = %v, want ErrMalformedWelcome", err)
+	}
+}
+
+func TestParseWelcomeRejectsWrongSize(t *testing.T) {
+	_, sk := makePair(t)
+	shared := precompute(PublicKey{1}, &sk)
+	bad := wire.Command{Name: welcomeCommandName, Data: []byte{0x01}}
+	if _, _, err := parseWelcome(bad, shared); !errors.Is(err, ErrMalformedWelcome) {
+		t.Fatalf("err = %v, want ErrMalformedWelcome", err)
+	}
+}
+
+func TestParseWelcomeRejectsTamperedBox(t *testing.T) {
+	clientTransPub, clientTransSec := makePair(t)
+	serverLongPub, serverLongSec := makePair(t)
+	serverTransPub, serverTransSec := makePair(t)
+	var cookieKey SecretKey
+	if _, err := rand.Read(cookieKey[:]); err != nil {
+		t.Fatalf("rand cookieKey: %v", err)
+	}
+
+	cookie, _ := sealCookie(clientTransPub, serverTransSec, &cookieKey, rand.Reader)
+	welcomeShared := precompute(clientTransPub, &serverLongSec)
+	openShared := precompute(serverLongPub, &clientTransSec)
+	cmd, _ := encodeWelcome(serverTransPub, cookie, welcomeShared, rand.Reader)
+
+	cmd.Data[len(cmd.Data)-1] ^= 0x01
+	if _, _, err := parseWelcome(cmd, openShared); !errors.Is(err, ErrBoxOpen) {
+		t.Fatalf("err = %v, want ErrBoxOpen", err)
+	}
+}
+
+func TestOpenCookieRejectsTampered(t *testing.T) {
+	clientTransPub, _ := makePair(t)
+	_, serverTransSec := makePair(t)
+	var cookieKey SecretKey
+	if _, err := rand.Read(cookieKey[:]); err != nil {
+		t.Fatalf("rand cookieKey: %v", err)
+	}
+
+	cookie, _ := sealCookie(clientTransPub, serverTransSec, &cookieKey, rand.Reader)
+	cookie[len(cookie)-1] ^= 0x01
+	if _, _, err := openCookie(cookie, &cookieKey); !errors.Is(err, ErrBoxOpen) {
+		t.Fatalf("err = %v, want ErrBoxOpen", err)
+	}
+}
+
+func TestOpenCookieRejectsWrongKey(t *testing.T) {
+	clientTransPub, _ := makePair(t)
+	_, serverTransSec := makePair(t)
+	var goodKey, badKey SecretKey
+	if _, err := rand.Read(goodKey[:]); err != nil {
+		t.Fatalf("rand goodKey: %v", err)
+	}
+	if _, err := rand.Read(badKey[:]); err != nil {
+		t.Fatalf("rand badKey: %v", err)
+	}
+
+	cookie, _ := sealCookie(clientTransPub, serverTransSec, &goodKey, rand.Reader)
+	if _, _, err := openCookie(cookie, &badKey); !errors.Is(err, ErrBoxOpen) {
+		t.Fatalf("err = %v, want ErrBoxOpen", err)
+	}
+}
