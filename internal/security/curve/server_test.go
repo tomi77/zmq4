@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tomi77/zmq4/internal/security"
 	"github.com/tomi77/zmq4/internal/wire"
 )
 
@@ -352,12 +353,151 @@ func TestServerAuthRejectReasonTruncated(t *testing.T) {
 	}
 }
 
-// silence unused-import warnings for imports that fully grow in
-// subsequent tasks. Drop these placeholders once the appended tests
-// reference each import legitimately.
-var (
-	_ = bytes.Equal
-)
+func TestServerReceiveErrorAtHelloStep(t *testing.T) {
+	_, sec := makePair(t)
+	s, _ := NewServer(ServerOptions{
+		OurPublicKey: PublicKey{1, 2, 3}, OurSecretKey: &sec, Authorizer: acceptAll,
+	})
+	errCmd, _ := wire.ErrorCommand{Reason: "client gives up"}.Encode()
+	_, _, err := s.Receive(errCmd)
+	if !errors.Is(err, ErrPeerError) {
+		t.Fatalf("err = %v, want ErrPeerError", err)
+	}
+	if !strings.Contains(err.Error(), "client gives up") {
+		t.Fatalf("error %q does not include reason", err)
+	}
+}
+
+func TestServerReceiveUnexpectedCommandAtHelloStep(t *testing.T) {
+	_, sec := makePair(t)
+	s, _ := NewServer(ServerOptions{
+		OurPublicKey: PublicKey{1, 2, 3}, OurSecretKey: &sec, Authorizer: acceptAll,
+	})
+	if _, _, err := s.Receive(wire.Command{Name: "PING"}); !errors.Is(err, ErrUnexpectedCommand) {
+		t.Fatalf("err = %v, want ErrUnexpectedCommand", err)
+	}
+}
+
+func TestServerReceiveInitiateAtAwaitHelloReturnsUnexpectedCommand(t *testing.T) {
+	_, sec := makePair(t)
+	s, _ := NewServer(ServerOptions{
+		OurPublicKey: PublicKey{1, 2, 3}, OurSecretKey: &sec, Authorizer: acceptAll,
+	})
+	bogus := wire.Command{Name: initiateCommandName, Data: make([]byte, initiateMinBodyLen)}
+	if _, _, err := s.Receive(bogus); !errors.Is(err, ErrUnexpectedCommand) {
+		t.Fatalf("err = %v, want ErrUnexpectedCommand", err)
+	}
+}
+
+func TestServerReceiveMalformedHello(t *testing.T) {
+	_, sec := makePair(t)
+	s, _ := NewServer(ServerOptions{
+		OurPublicKey: PublicKey{1}, OurSecretKey: &sec, Authorizer: acceptAll,
+	})
+	bad := wire.Command{Name: helloCommandName, Data: []byte{0x01}}
+	if _, _, err := s.Receive(bad); !errors.Is(err, ErrMalformedHello) {
+		t.Fatalf("err = %v, want ErrMalformedHello", err)
+	}
+}
+
+func TestServerReceiveAfterDone(t *testing.T) {
+	clientLongPub, clientLongSec := makePair(t)
+	serverLongPub, serverLongSec := makePair(t)
+	s, _ := NewServer(ServerOptions{
+		OurPublicKey: serverLongPub, OurSecretKey: &serverLongSec, Authorizer: acceptAll,
+	})
+	c, _ := NewClient(ClientOptions{
+		ServerKey: serverLongPub, OurPublicKey: clientLongPub, OurSecretKey: &clientLongSec,
+	})
+	hello, _ := c.Start()
+	welcome, _, _ := s.Receive(hello)
+	initiate, _, _ := c.Receive(*welcome)
+	if _, _, err := s.Receive(*initiate); err != nil {
+		t.Fatalf("server.Receive(INITIATE): %v", err)
+	}
+
+	if _, _, err := s.Receive(*initiate); !errors.Is(err, ErrAlreadyDone) {
+		t.Fatalf("Receive after done = %v, want ErrAlreadyDone", err)
+	}
+}
+
+func TestServerCloseIdempotentAndRedacts(t *testing.T) {
+	_, sec := makePair(t)
+	s, err := NewServer(ServerOptions{
+		OurPublicKey: PublicKey{1}, OurSecretKey: &sec, Authorizer: acceptAll,
+	})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	s.Close()
+	s.Close()
+
+	if _, _, err := s.Receive(wire.Command{Name: helloCommandName}); !errors.Is(err, security.ErrClosed) {
+		t.Fatalf("Receive after Close = %v, want security.ErrClosed", err)
+	}
+	if _, err := s.Wrap(wire.Frame{}); !errors.Is(err, security.ErrClosed) {
+		t.Fatalf("Wrap after Close = %v, want security.ErrClosed", err)
+	}
+	if _, err := s.Unwrap(wire.Frame{Kind: wire.FrameCommand, Body: make([]byte, 25)}); !errors.Is(err, security.ErrClosed) {
+		t.Fatalf("Unwrap after Close = %v, want security.ErrClosed", err)
+	}
+	// Caller-owned long-term secret untouched.
+	if sec == (SecretKey{}) {
+		t.Fatalf("long-term secret was zeroed by Close")
+	}
+}
+
+func TestServerWrapBeforeDoneReturnsErrNotDone(t *testing.T) {
+	_, sec := makePair(t)
+	s, _ := NewServer(ServerOptions{
+		OurPublicKey: PublicKey{1}, OurSecretKey: &sec, Authorizer: acceptAll,
+	})
+	if _, err := s.Wrap(wire.Frame{Kind: wire.FrameMessage}); !errors.Is(err, security.ErrNotDone) {
+		t.Fatalf("err = %v, want security.ErrNotDone", err)
+	}
+}
+
+func TestServerWrapUnwrapRoundTrip(t *testing.T) {
+	clientLongPub, clientLongSec := makePair(t)
+	serverLongPub, serverLongSec := makePair(t)
+	s, _ := NewServer(ServerOptions{
+		OurPublicKey: serverLongPub, OurSecretKey: &serverLongSec, Authorizer: acceptAll,
+	})
+	c, _ := NewClient(ClientOptions{
+		ServerKey: serverLongPub, OurPublicKey: clientLongPub, OurSecretKey: &clientLongSec,
+	})
+	hello, _ := c.Start()
+	welcome, _, _ := s.Receive(hello)
+	initiate, _, _ := c.Receive(*welcome)
+	ready, _, _ := s.Receive(*initiate)
+	c.Receive(*ready)
+
+	in := wire.Frame{Kind: wire.FrameMessage, More: true, Body: []byte("ping")}
+	wrapped, err := c.Wrap(in)
+	if err != nil {
+		t.Fatalf("Wrap: %v", err)
+	}
+	got, err := s.Unwrap(wrapped)
+	if err != nil {
+		t.Fatalf("Unwrap: %v", err)
+	}
+	if got.Kind != wire.FrameMessage || got.More != true || !bytes.Equal(got.Body, []byte("ping")) {
+		t.Fatalf("round trip = %+v", got)
+	}
+	// Reverse direction.
+	in2 := wire.Frame{Kind: wire.FrameMessage, More: false, Body: []byte("pong")}
+	wrapped2, err := s.Wrap(in2)
+	if err != nil {
+		t.Fatalf("server Wrap: %v", err)
+	}
+	got2, err := c.Unwrap(wrapped2)
+	if err != nil {
+		t.Fatalf("client Unwrap: %v", err)
+	}
+	if !bytes.Equal(got2.Body, []byte("pong")) || got2.More {
+		t.Fatalf("reverse round trip = %+v", got2)
+	}
+}
 
 // silence unused-import warning for crypto/rand (used by future tasks).
 var _ = rand.Reader
