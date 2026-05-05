@@ -283,6 +283,134 @@ func TestClientReceiveTamperedWelcome(t *testing.T) {
 	}
 }
 
+func TestClientReceiveReadyCompletesHandshake(t *testing.T) {
+	clientLongPub, clientLongSec := makePair(t)
+	serverLongPub, serverLongSec := makePair(t)
+	mdS := wire.Metadata{
+		{Name: []byte("Socket-Type"), Value: []byte("ROUTER")},
+		{Name: []byte("Identity"), Value: []byte("server-1")},
+	}
+
+	c, err := NewClient(ClientOptions{
+		ServerKey: serverLongPub, OurPublicKey: clientLongPub, OurSecretKey: &clientLongSec,
+	})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	hello, _ := c.Start()
+	var clientTransPub PublicKey
+	copy(clientTransPub[:], hello.Data[2+72:2+72+32])
+
+	serverTransPub, serverTransSec := makePair(t)
+	var cookieKey SecretKey
+	if _, err := rand.Read(cookieKey[:]); err != nil {
+		t.Fatalf("rand cookieKey: %v", err)
+	}
+	ck, _ := sealCookie(clientTransPub, serverTransSec, &cookieKey, rand.Reader)
+	welcomeShared := precompute(clientTransPub, &serverLongSec)
+	welcome, _ := encodeWelcome(serverTransPub, ck, welcomeShared, rand.Reader)
+	if _, _, err := c.Receive(welcome); err != nil {
+		t.Fatalf("Receive(WELCOME): %v", err)
+	}
+
+	// Server seals a READY under afterReady = s' × C'.
+	afterReadyServer := precompute(clientTransPub, &serverTransSec)
+	ready, err := encodeReady(mdS, afterReadyServer, 1, rand.Reader)
+	if err != nil {
+		t.Fatalf("encodeReady: %v", err)
+	}
+
+	out, done, err := c.Receive(ready)
+	if err != nil {
+		t.Fatalf("Receive(READY): %v", err)
+	}
+	if !done || out != nil {
+		t.Fatalf("Receive(READY): out=%+v done=%v, want nil/true", out, done)
+	}
+	if !c.Done() {
+		t.Fatalf("Done() == false after READY")
+	}
+	pm := c.PeerMetadata()
+	if v, ok := pm.Get("Socket-Type"); !ok || string(v) != "ROUTER" {
+		t.Fatalf("PeerMetadata Socket-Type = %q, want ROUTER", v)
+	}
+	if c.PeerPublicKey() != serverLongPub {
+		t.Fatalf("PeerPublicKey = %x, want %x", c.PeerPublicKey(), serverLongPub)
+	}
+}
+
+func TestClientPeerMetadataIndependentOfInputBuffer(t *testing.T) {
+	clientLongPub, clientLongSec := makePair(t)
+	serverLongPub, serverLongSec := makePair(t)
+	mdS := wire.Metadata{
+		{Name: []byte("Socket-Type"), Value: []byte("ROUTER")},
+	}
+
+	c, _ := NewClient(ClientOptions{
+		ServerKey: serverLongPub, OurPublicKey: clientLongPub, OurSecretKey: &clientLongSec,
+	})
+	hello, _ := c.Start()
+	var clientTransPub PublicKey
+	copy(clientTransPub[:], hello.Data[2+72:2+72+32])
+	serverTransPub, serverTransSec := makePair(t)
+	var cookieKey SecretKey
+	if _, err := rand.Read(cookieKey[:]); err != nil {
+		t.Fatalf("rand cookieKey: %v", err)
+	}
+	ck, _ := sealCookie(clientTransPub, serverTransSec, &cookieKey, rand.Reader)
+	welcomeShared := precompute(clientTransPub, &serverLongSec)
+	welcome, _ := encodeWelcome(serverTransPub, ck, welcomeShared, rand.Reader)
+	c.Receive(welcome)
+
+	afterReadyServer := precompute(clientTransPub, &serverTransSec)
+	ready, _ := encodeReady(mdS, afterReadyServer, 1, rand.Reader)
+
+	// Wrap ready.Data in a fresh buffer we can later clobber.
+	buf := make([]byte, len(ready.Data))
+	copy(buf, ready.Data)
+	ready = wire.Command{Name: ready.Name, Data: buf}
+
+	if _, _, err := c.Receive(ready); err != nil {
+		t.Fatalf("Receive(READY): %v", err)
+	}
+	for i := range buf {
+		buf[i] = 0xFF
+	}
+	pm := c.PeerMetadata()
+	if v, ok := pm.Get("Socket-Type"); !ok || string(v) != "ROUTER" {
+		t.Fatalf("PeerMetadata after clobber = %q, want ROUTER", v)
+	}
+}
+
+func TestClientReceiveTamperedReady(t *testing.T) {
+	clientLongPub, clientLongSec := makePair(t)
+	serverLongPub, serverLongSec := makePair(t)
+
+	c, _ := NewClient(ClientOptions{
+		ServerKey: serverLongPub, OurPublicKey: clientLongPub, OurSecretKey: &clientLongSec,
+	})
+	hello, _ := c.Start()
+	var clientTransPub PublicKey
+	copy(clientTransPub[:], hello.Data[2+72:2+72+32])
+	serverTransPub, serverTransSec := makePair(t)
+	var cookieKey SecretKey
+	if _, err := rand.Read(cookieKey[:]); err != nil {
+		t.Fatalf("rand cookieKey: %v", err)
+	}
+	ck, _ := sealCookie(clientTransPub, serverTransSec, &cookieKey, rand.Reader)
+	welcomeShared := precompute(clientTransPub, &serverLongSec)
+	welcome, _ := encodeWelcome(serverTransPub, ck, welcomeShared, rand.Reader)
+	c.Receive(welcome)
+
+	afterReadyServer := precompute(clientTransPub, &serverTransSec)
+	ready, _ := encodeReady(nil, afterReadyServer, 1, rand.Reader)
+	ready.Data[len(ready.Data)-1] ^= 0x01
+
+	if _, _, err := c.Receive(ready); !errors.Is(err, ErrBoxOpen) {
+		t.Fatalf("err = %v, want ErrBoxOpen", err)
+	}
+}
+
 // silence unused-import warning if a refactor removes references.
 var _ = bytes.Equal
 var _ wire.Frame

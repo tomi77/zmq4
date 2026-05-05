@@ -8,6 +8,7 @@ import (
 	"golang.org/x/crypto/nacl/box"
 
 	"github.com/tomi77/zmq4/internal/security"
+	"github.com/tomi77/zmq4/internal/security/seccommon"
 	"github.com/tomi77/zmq4/internal/wire"
 )
 
@@ -164,10 +165,36 @@ func (c *ClientState) Receive(cmd wire.Command) (out *wire.Command, done bool, e
 		return nil, false, fmt.Errorf("%w: %q (expected WELCOME)", ErrUnexpectedCommand, cmd.Name)
 	}
 
-	// AWAIT_READY — fleshed out in Task 16.
+	// AWAIT_READY.
+	switch cmd.Name {
+	case readyCommandName:
+		return c.handleReady(cmd)
+	case wire.ErrorCommandName:
+		return nil, false, c.failPeerError(cmd)
+	}
 	c.failed = true
 	return nil, false, fmt.Errorf("%w: %q (expected READY)", ErrUnexpectedCommand, cmd.Name)
 }
+
+func (c *ClientState) handleReady(cmd wire.Command) (*wire.Command, bool, error) {
+	md, perr := parseReady(cmd, c.afterReady)
+	if perr != nil {
+		c.failed = true
+		return nil, false, perr
+	}
+	c.peer = seccommon.CloneMetadata(md)
+	c.done = true
+	return nil, true, nil
+}
+
+// PeerMetadata returns the metadata the server advertised in READY.
+// Valid only after Done(). Aliases an internal buffer; callers MUST
+// NOT mutate it.
+func (c *ClientState) PeerMetadata() wire.Metadata { return c.peer }
+
+// PeerPublicKey returns the server's long-term public key (== ServerKey
+// from ClientOptions). Provided for symmetry with ServerState.
+func (c *ClientState) PeerPublicKey() PublicKey { return c.serverPub }
 
 func (c *ClientState) handleWelcome(cmd wire.Command) (*wire.Command, bool, error) {
 	serverTransPub, ck, perr := parseWelcome(cmd, c.handshakeShared)
