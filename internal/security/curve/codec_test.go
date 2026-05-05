@@ -297,3 +297,125 @@ func TestOpenVouchRejectsWrongClientLongPub(t *testing.T) {
 		t.Fatalf("err = %v, want ErrBoxOpen", err)
 	}
 }
+
+func TestEncodeInitiateRoundTrip(t *testing.T) {
+	// Set up the post-WELCOME state: client has S' from welcome,
+	// server has c' from HELLO.
+	clientLongPub, clientLongSec := makePair(t)
+	serverLongPub, _ := makePair(t)
+	clientTransPub, clientTransSec := makePair(t)
+	serverTransPub, serverTransSec := makePair(t)
+
+	afterReadyClient := precompute(serverTransPub, &clientTransSec) // c' × S'
+	afterReadyServer := precompute(clientTransPub, &serverTransSec) // s' × C'
+
+	// Sanity: NaCl box DH symmetry.
+	if !bytes.Equal(afterReadyClient[:], afterReadyServer[:]) {
+		t.Fatalf("afterReady asymmetry: %x vs %x", afterReadyClient[:], afterReadyServer[:])
+	}
+
+	vouchShared := precompute(serverLongPub, &clientLongSec)
+	v, err := encodeVouch(clientTransPub, serverLongPub, vouchShared, rand.Reader)
+	if err != nil {
+		t.Fatalf("encodeVouch: %v", err)
+	}
+	cookieValue := cookie{1, 2, 3, 4} // opaque; not opened by INITIATE codec.
+
+	md := wire.Metadata{
+		{Name: []byte("Socket-Type"), Value: []byte("DEALER")},
+		{Name: []byte("Identity"), Value: []byte{0xAA, 0xBB}},
+	}
+
+	cmd, err := encodeInitiate(cookieValue, v, clientLongPub, md, afterReadyClient, 1, rand.Reader)
+	if err != nil {
+		t.Fatalf("encodeInitiate: %v", err)
+	}
+	if cmd.Name != initiateCommandName {
+		t.Fatalf("cmd.Name = %q, want %q", cmd.Name, initiateCommandName)
+	}
+	gotCookie, gotVouch, gotLongPub, gotMeta, err := parseInitiate(cmd, afterReadyServer)
+	if err != nil {
+		t.Fatalf("parseInitiate: %v", err)
+	}
+	if gotCookie != cookieValue {
+		t.Fatalf("cookie not echoed verbatim")
+	}
+	if gotVouch != v {
+		t.Fatalf("vouch differs after round-trip")
+	}
+	if gotLongPub != clientLongPub {
+		t.Fatalf("client long-term pub = %x, want %x", gotLongPub, clientLongPub)
+	}
+	if len(gotMeta) != len(md) ||
+		!bytes.Equal(gotMeta[0].Name, md[0].Name) ||
+		!bytes.Equal(gotMeta[0].Value, md[0].Value) ||
+		!bytes.Equal(gotMeta[1].Name, md[1].Name) ||
+		!bytes.Equal(gotMeta[1].Value, md[1].Value) {
+		t.Fatalf("metadata differs after round-trip: got=%+v want=%+v", gotMeta, md)
+	}
+}
+
+func TestEncodeInitiateEmptyMetadataRoundTrip(t *testing.T) {
+	clientLongPub, clientLongSec := makePair(t)
+	serverLongPub, _ := makePair(t)
+	clientTransPub, clientTransSec := makePair(t)
+	serverTransPub, serverTransSec := makePair(t)
+	afterReadyClient := precompute(serverTransPub, &clientTransSec)
+	afterReadyServer := precompute(clientTransPub, &serverTransSec)
+
+	vouchShared := precompute(serverLongPub, &clientLongSec)
+	v, err := encodeVouch(clientTransPub, serverLongPub, vouchShared, rand.Reader)
+	if err != nil {
+		t.Fatalf("encodeVouch: %v", err)
+	}
+
+	cmd, err := encodeInitiate(cookie{}, v, clientLongPub, nil, afterReadyClient, 1, rand.Reader)
+	if err != nil {
+		t.Fatalf("encodeInitiate(nil): %v", err)
+	}
+	_, _, gotLongPub, gotMeta, err := parseInitiate(cmd, afterReadyServer)
+	if err != nil {
+		t.Fatalf("parseInitiate: %v", err)
+	}
+	if gotLongPub != clientLongPub {
+		t.Fatalf("clientLongPub = %x, want %x", gotLongPub, clientLongPub)
+	}
+	if len(gotMeta) != 0 {
+		t.Fatalf("metadata = %+v, want empty", gotMeta)
+	}
+}
+
+func TestParseInitiateRejectsWrongName(t *testing.T) {
+	_, sk := makePair(t)
+	shared := precompute(PublicKey{1}, &sk)
+	bad := wire.Command{Name: "READY", Data: make([]byte, 200)}
+	if _, _, _, _, err := parseInitiate(bad, shared); !errors.Is(err, ErrMalformedInitiate) {
+		t.Fatalf("err = %v, want ErrMalformedInitiate", err)
+	}
+}
+
+func TestParseInitiateRejectsTooSmall(t *testing.T) {
+	_, sk := makePair(t)
+	shared := precompute(PublicKey{1}, &sk)
+	bad := wire.Command{Name: initiateCommandName, Data: []byte{0x01, 0x02}}
+	if _, _, _, _, err := parseInitiate(bad, shared); !errors.Is(err, ErrMalformedInitiate) {
+		t.Fatalf("err = %v, want ErrMalformedInitiate", err)
+	}
+}
+
+func TestParseInitiateRejectsTamperedOuterBox(t *testing.T) {
+	clientLongPub, clientLongSec := makePair(t)
+	serverLongPub, _ := makePair(t)
+	clientTransPub, clientTransSec := makePair(t)
+	serverTransPub, serverTransSec := makePair(t)
+	afterReadyClient := precompute(serverTransPub, &clientTransSec)
+	afterReadyServer := precompute(clientTransPub, &serverTransSec)
+
+	vouchShared := precompute(serverLongPub, &clientLongSec)
+	v, _ := encodeVouch(clientTransPub, serverLongPub, vouchShared, rand.Reader)
+	cmd, _ := encodeInitiate(cookie{}, v, clientLongPub, nil, afterReadyClient, 1, rand.Reader)
+	cmd.Data[len(cmd.Data)-1] ^= 0x01
+	if _, _, _, _, err := parseInitiate(cmd, afterReadyServer); !errors.Is(err, ErrBoxOpen) {
+		t.Fatalf("err = %v, want ErrBoxOpen", err)
+	}
+}

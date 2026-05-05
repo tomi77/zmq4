@@ -305,3 +305,76 @@ func openVouch(v vouch, clientLongPub PublicKey, serverLongSec *SecretKey) (Publ
 	copy(s[:], plain[32:])
 	return c1, s, nil
 }
+
+// initiateMinBodyLen is the minimum INITIATE body size:
+//   cookie (96) + initiate-nonce (8) + box-overhead (16) + vouch (96) + C (32)
+// = 248 B (when metadata is empty).
+const initiateMinBodyLen = 96 + 8 + 16 + 96 + 32
+
+// encodeInitiate builds an INITIATE command. sharedKey is
+// precompute(serverTransPub, clientTransSec) = c' × S'.
+func encodeInitiate(ck cookie, v vouch, clientLongPub PublicKey,
+	metadata wire.Metadata, sharedKey *SharedKey, nonce uint64, rng io.Reader,
+) (wire.Command, error) {
+	_ = rng // unused; INITIATE uses a counter short-nonce, no random bytes.
+
+	mdEnc := wire.EncodeMetadata(metadata)
+	body := make([]byte, 96+8+16+96+32+len(mdEnc))
+	copy(body[:96], ck[:])
+	binary.BigEndian.PutUint64(body[96:96+8], nonce)
+
+	plaintext := make([]byte, 96+32+len(mdEnc))
+	copy(plaintext[:96], v[:])
+	copy(plaintext[96:96+32], clientLongPub[:])
+	copy(plaintext[96+32:], mdEnc)
+
+	var nacl [24]byte
+	copy(nacl[:16], initiateNoncePrefix[:])
+	binary.BigEndian.PutUint64(nacl[16:], nonce)
+
+	out := box.SealAfterPrecomputation(nil, plaintext, &nacl, (*[32]byte)(sharedKey))
+	expected := 96 + 32 + len(mdEnc) + 16
+	if len(out) != expected {
+		return wire.Command{}, fmt.Errorf("curve: internal: initiate-box len=%d want %d", len(out), expected)
+	}
+	copy(body[96+8:], out)
+	return wire.Command{Name: initiateCommandName, Data: body}, nil
+}
+
+// parseInitiate inverts encodeInitiate. sharedKey is
+// precompute(clientTransPub, serverTransSec) = s' × C'. Metadata is
+// returned aliasing the decrypted plaintext buffer; callers MUST clone
+// (via seccommon.CloneMetadata) if they want to retain it past the
+// next ServerState.Receive.
+func parseInitiate(cmd wire.Command, sharedKey *SharedKey) (cookie, vouch, PublicKey, wire.Metadata, error) {
+	if cmd.Name != initiateCommandName {
+		return cookie{}, vouch{}, PublicKey{}, nil, fmt.Errorf("%w: command name %q", ErrMalformedInitiate, cmd.Name)
+	}
+	if len(cmd.Data) < initiateMinBodyLen {
+		return cookie{}, vouch{}, PublicKey{}, nil, fmt.Errorf("%w: body size %d, want ≥ %d", ErrMalformedInitiate, len(cmd.Data), initiateMinBodyLen)
+	}
+	var ck cookie
+	copy(ck[:], cmd.Data[:96])
+
+	var nacl [24]byte
+	copy(nacl[:16], initiateNoncePrefix[:])
+	copy(nacl[16:], cmd.Data[96:96+8])
+
+	plain, ok := box.OpenAfterPrecomputation(nil, cmd.Data[96+8:], &nacl, (*[32]byte)(sharedKey))
+	if !ok {
+		return cookie{}, vouch{}, PublicKey{}, nil, fmt.Errorf("%w: initiate", ErrBoxOpen)
+	}
+	if len(plain) < 96+32 {
+		return cookie{}, vouch{}, PublicKey{}, nil, fmt.Errorf("%w: plaintext too short (%d)", ErrMalformedInitiate, len(plain))
+	}
+	var v vouch
+	copy(v[:], plain[:96])
+	var clientLongPub PublicKey
+	copy(clientLongPub[:], plain[96:96+32])
+
+	md, perr := wire.ParseMetadata(plain[96+32:])
+	if perr != nil {
+		return cookie{}, vouch{}, PublicKey{}, nil, fmt.Errorf("%w: %v", ErrMalformedInitiate, perr)
+	}
+	return ck, v, clientLongPub, md, nil
+}
