@@ -3,7 +3,7 @@ package null
 import (
 	"fmt"
 
-	"github.com/tomi77/zmq4/internal/security/metaclone"
+	"github.com/tomi77/zmq4/internal/security/seccommon"
 	"github.com/tomi77/zmq4/internal/wire"
 )
 
@@ -68,7 +68,7 @@ func (s *State) Receive(cmd wire.Command) (out *wire.Command, done bool, err err
 			s.failed = true
 			return nil, false, fmt.Errorf("%w: %v", ErrMalformedReady, perr)
 		}
-		s.peer = metaclone.Clone(rc.Metadata)
+		s.peer = seccommon.CloneMetadata(rc.Metadata)
 		s.received = true
 		return nil, true, nil
 	case wire.ErrorCommandName:

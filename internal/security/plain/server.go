@@ -3,7 +3,7 @@ package plain
 import (
 	"fmt"
 
-	"github.com/tomi77/zmq4/internal/security/metaclone"
+	"github.com/tomi77/zmq4/internal/security/seccommon"
 	"github.com/tomi77/zmq4/internal/wire"
 )
 
@@ -83,7 +83,7 @@ func (s *ServerState) Receive(cmd wire.Command) (out *wire.Command, done bool, e
 			s.failed = true
 			return nil, false, fmt.Errorf("%w: %v", ErrMalformedInitiate, perr)
 		}
-		s.peer = metaclone.Clone(md)
+		s.peer = seccommon.CloneMetadata(md)
 		ready, encErr := wire.ReadyCommand{Metadata: s.local}.Encode()
 		if encErr != nil {
 			s.failed = true
