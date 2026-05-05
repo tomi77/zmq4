@@ -136,9 +136,79 @@ func (s *ServerState) Receive(cmd wire.Command) (out *wire.Command, done bool, e
 		return nil, false, fmt.Errorf("%w: %q (expected HELLO)", ErrUnexpectedCommand, cmd.Name)
 	}
 
-	// AWAIT_INITIATE — fleshed out in Task 19/20.
+	// AWAIT_INITIATE.
+	switch cmd.Name {
+	case initiateCommandName:
+		return s.handleInitiate(cmd)
+	case wire.ErrorCommandName:
+		return nil, false, s.failPeerError(cmd)
+	}
 	s.failed = true
 	return nil, false, fmt.Errorf("%w: %q (expected INITIATE)", ErrUnexpectedCommand, cmd.Name)
+}
+
+func (s *ServerState) handleInitiate(cmd wire.Command) (*wire.Command, bool, error) {
+	ck, v, peerLongPub, md, perr := parseInitiate(cmd, s.afterReady)
+	if perr != nil {
+		s.failed = true
+		return nil, false, perr
+	}
+	// Open cookie under cookieKey. The inner (C', s') MUST match the
+	// values we recorded in handleHello.
+	ckC1, ckSPrimeSec, cErr := openCookie(ck, &s.cookieKey)
+	if cErr != nil {
+		s.failed = true
+		return nil, false, cErr
+	}
+	if ckC1 != s.peerTransPub {
+		s.failed = true
+		return nil, false, fmt.Errorf("%w: cookie C' mismatch", ErrCookieMismatch)
+	}
+	if ckSPrimeSec != s.transSec {
+		s.failed = true
+		return nil, false, fmt.Errorf("%w: cookie s' mismatch", ErrCookieMismatch)
+	}
+	// Open vouch under (clientLongPub × ourLongSec) and verify the
+	// inner (C' || S) matches our recorded values.
+	vC1, vS, vErr := openVouch(v, peerLongPub, s.ourLongSec)
+	if vErr != nil {
+		s.failed = true
+		return nil, false, vErr
+	}
+	if vC1 != s.peerTransPub {
+		s.failed = true
+		return nil, false, fmt.Errorf("%w: vouch C'", ErrBoxOpen)
+	}
+	if vS != s.ourLongPub {
+		s.failed = true
+		return nil, false, fmt.Errorf("%w: vouch S", ErrBoxOpen)
+	}
+
+	// Defensive copy of metadata before passing to Authorizer.
+	clonedMd := seccommon.CloneMetadata(md)
+
+	if authErr := s.authorizer(peerLongPub, clonedMd); authErr != nil {
+		return s.failAuthRejected(authErr)
+	}
+
+	s.peerLongPub = peerLongPub
+	s.peer = clonedMd
+
+	ready, rErr := encodeReady(s.local, s.afterReady, s.readyNonce, s.rand)
+	if rErr != nil {
+		s.failed = true
+		return nil, false, fmt.Errorf("curve: encode READY: %w", rErr)
+	}
+	s.readyNonce++
+	s.done = true
+	return &ready, true, nil
+}
+
+// failAuthRejected (Task 20) — placeholder to keep the helper name
+// referenced; full implementation lands next.
+func (s *ServerState) failAuthRejected(authErr error) (*wire.Command, bool, error) {
+	s.failed = true
+	return nil, false, fmt.Errorf("%w: %s", ErrAuthRejected, authErr)
 }
 
 func (s *ServerState) handleHello(cmd wire.Command) (*wire.Command, bool, error) {
@@ -270,7 +340,3 @@ func (s *ServerState) Close() {
 // (ClientState also implements security.ClientMechanism — that
 // assertion lives in interfaces_conformance_test.go to avoid a cycle.)
 var _ security.Mechanism = (*ServerState)(nil)
-
-// Workaround for the unused-import warning if seccommon is not yet
-// referenced in this file. Removed when handleInitiate (Task 19) lands.
-var _ = seccommon.CloneMetadata
