@@ -3,6 +3,7 @@ package null
 import (
 	"fmt"
 
+	"github.com/tomi77/zmq4/internal/security"
 	"github.com/tomi77/zmq4/internal/security/seccommon"
 	"github.com/tomi77/zmq4/internal/wire"
 )
@@ -88,3 +89,21 @@ func (s *State) Receive(cmd wire.Command) (out *wire.Command, done bool, err err
 // slice is owned by the State and lives until the State is discarded;
 // callers must not mutate it.
 func (s *State) PeerMetadata() wire.Metadata { return s.peer }
+
+// Wrap returns f unchanged. NULL does no traffic encapsulation.
+// Returns security.ErrNotDone if called before the handshake completes.
+func (s *State) Wrap(f wire.Frame) (wire.Frame, error) {
+	if !s.Done() {
+		return wire.Frame{}, security.ErrNotDone
+	}
+	return f, nil
+}
+
+// Unwrap returns f unchanged. NULL does no traffic encapsulation.
+// Returns security.ErrNotDone if called before the handshake completes.
+func (s *State) Unwrap(f wire.Frame) (wire.Frame, error) {
+	if !s.Done() {
+		return wire.Frame{}, security.ErrNotDone
+	}
+	return f, nil
+}
