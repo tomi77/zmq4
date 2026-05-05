@@ -1,6 +1,6 @@
 # 02c — CURVE security mechanism (Phase 2c)
 
-> **Status:** draft, awaiting implementation.
+> **Status:** implemented, frozen for F4+.
 > **Author:** Tomasz Rup
 > **Date:** 2026-05-04
 > **Layer:** L2 — `internal/security/curve` + cross-mechanism extraction
@@ -1269,25 +1269,25 @@ pinned via `testing.AllocsPerRun` in a separate
 
 ### 8.7 Done criteria
 
-- [ ] All unit tests pass.
-- [ ] `Mechanism` / `ClientMechanism` conformance tests pass for all
+- [x] All unit tests pass.
+- [x] `Mechanism` / `ClientMechanism` conformance tests pass for all
       five concrete types.
-- [ ] All four property tests pass 1000 iterations each.
-- [ ] All 10 vector tests pass with byte equality under the pinned seed.
-- [ ] `go vet ./...` clean.
-- [ ] `staticcheck ./...` clean.
-- [ ] `modernize -fix ./...` clean (no diff). [Per repository convention,
+- [x] All four property tests pass 1000 iterations each.
+- [x] All 10 vector tests pass with byte equality under the pinned seed.
+- [x] `go vet ./...` clean.
+- [x] `staticcheck ./...` clean.
+- [x] `modernize -fix ./...` clean (no diff). [Per repository convention,
       run before tagging phase end.]
-- [ ] `go test -race ./internal/security/curve/...` clean.
-- [ ] `go test -race ./internal/security/...` clean (root package + the
+- [x] `go test -race ./internal/security/curve/...` clean.
+- [x] `go test -race ./internal/security/...` clean (root package + the
       conformance tests across null/plain/curve).
-- [ ] Benchmark allocs/op pinned via `testing.AllocsPerRun` for client
+- [x] Benchmark allocs/op pinned via `testing.AllocsPerRun` for client
       handshake, server handshake, Wrap, and Unwrap.
 - [ ] Phase tagged `phase-2c-curve-complete` only after all of the above.
-- [ ] `00-meta-overview.md` §4 updated: F2c row → "Complete".
-- [ ] `00-meta-overview.md` §7 updated: external dependencies row
+- [x] `00-meta-overview.md` §4 updated: F2c row → "Complete".
+- [x] `00-meta-overview.md` §7 updated: external dependencies row
       mentions both `nacl/box` and `nacl/secretbox` actually used.
-- [ ] F2a/F2b amendment note added to `00-meta-overview.md` (under
+- [x] F2a/F2b amendment note added to `00-meta-overview.md` (under
       §4, alongside the existing "F1 amendments" subsection).
 
 ## 9. Open questions
