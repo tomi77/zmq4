@@ -235,3 +235,82 @@ func (c *ClientState) failPeerError(cmd wire.Command) error {
 	}
 	return fmt.Errorf("%w: %s", ErrPeerError, ec.Reason)
 }
+
+// Wrap encapsulates an outgoing frame as MESSAGE. See
+// security.Mechanism.Wrap. Each call advances the send-nonce counter.
+// Returns ErrNonceExhausted if the counter would wrap past 2^64-1.
+func (c *ClientState) Wrap(f wire.Frame) (wire.Frame, error) {
+	switch {
+	case c.closed:
+		return wire.Frame{}, security.ErrClosed
+	case !c.Done():
+		return wire.Frame{}, security.ErrNotDone
+	}
+	if c.sendNonce == ^uint64(0) {
+		return wire.Frame{}, ErrNonceExhausted
+	}
+	flags := byte(0)
+	if f.More {
+		flags = 0x01
+	}
+	cmd, err := encodeMessage(flags, f.Body, c.afterReady, messageClientPrefix, c.sendNonce)
+	if err != nil {
+		return wire.Frame{}, fmt.Errorf("curve: encode MESSAGE: %w", err)
+	}
+	c.sendNonce++
+
+	body, err := wire.EncodeCommand(cmd)
+	if err != nil {
+		return wire.Frame{}, fmt.Errorf("curve: encode command: %w", err)
+	}
+	return wire.Frame{Kind: wire.FrameCommand, More: false, Body: body}, nil
+}
+
+// Unwrap decrypts an incoming MESSAGE. Each successful call advances
+// recvNonce and rejects strictly-non-monotonic nonces with
+// ErrNonceReused.
+func (c *ClientState) Unwrap(f wire.Frame) (wire.Frame, error) {
+	switch {
+	case c.closed:
+		return wire.Frame{}, security.ErrClosed
+	case !c.Done():
+		return wire.Frame{}, security.ErrNotDone
+	}
+	if f.Kind != wire.FrameCommand {
+		return wire.Frame{}, fmt.Errorf("%w: kind %v", ErrMalformedMessage, f.Kind)
+	}
+	cmd, perr := wire.ParseCommand(f.Body)
+	if perr != nil {
+		return wire.Frame{}, fmt.Errorf("%w: %v", ErrMalformedMessage, perr)
+	}
+	flags, payload, nonce, perr := parseMessage(cmd, c.afterReady, messageServerPrefix)
+	if perr != nil {
+		return wire.Frame{}, perr
+	}
+	if nonce <= c.recvNonce {
+		return wire.Frame{}, fmt.Errorf("%w: incoming=%d last=%d", ErrNonceReused, nonce, c.recvNonce)
+	}
+	c.recvNonce = nonce
+	return wire.Frame{Kind: wire.FrameMessage, More: flags&0x01 == 0x01, Body: payload}, nil
+}
+
+// Close zeros the transient secret and any retained shared keys.
+// Idempotent. After Close, every method returns security.ErrClosed.
+// Long-term keys passed in via ClientOptions are NOT zeroed — the
+// caller owns that lifetime.
+func (c *ClientState) Close() {
+	if c.closed {
+		return
+	}
+	c.closed = true
+	c.transSec.Zero()
+	if c.handshakeShared != nil {
+		c.handshakeShared.Zero()
+	}
+	if c.afterReady != nil {
+		c.afterReady.Zero()
+	}
+	if c.vouchShared != nil {
+		c.vouchShared.Zero()
+	}
+}
