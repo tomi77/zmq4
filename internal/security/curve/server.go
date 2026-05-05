@@ -204,11 +204,14 @@ func (s *ServerState) handleInitiate(cmd wire.Command) (*wire.Command, bool, err
 	return &ready, true, nil
 }
 
-// failAuthRejected (Task 20) — placeholder to keep the helper name
-// referenced; full implementation lands next.
 func (s *ServerState) failAuthRejected(authErr error) (*wire.Command, bool, error) {
 	s.failed = true
-	return nil, false, fmt.Errorf("%w: %s", ErrAuthRejected, authErr)
+	reason := seccommon.SanitizeReason(authErr.Error())
+	errCmd, encErr := wire.ErrorCommand{Reason: reason}.Encode()
+	if encErr != nil {
+		return nil, false, fmt.Errorf("curve: encode ERROR: %w", encErr)
+	}
+	return &errCmd, false, fmt.Errorf("%w: %s", ErrAuthRejected, reason)
 }
 
 func (s *ServerState) handleHello(cmd wire.Command) (*wire.Command, bool, error) {

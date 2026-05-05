@@ -255,12 +255,108 @@ func TestServerReceiveInitiateWithTamperedCookie(t *testing.T) {
 	}
 }
 
+func TestServerReceiveInitiateRejectEmitsErrorAndFails(t *testing.T) {
+	clientLongPub, clientLongSec := makePair(t)
+	serverLongPub, serverLongSec := makePair(t)
+	rejecter := func(_ PublicKey, _ wire.Metadata) error { return errors.New("denied") }
+
+	s, _ := NewServer(ServerOptions{
+		OurPublicKey: serverLongPub, OurSecretKey: &serverLongSec,
+		Authorizer: rejecter,
+	})
+	c, _ := NewClient(ClientOptions{
+		ServerKey: serverLongPub, OurPublicKey: clientLongPub, OurSecretKey: &clientLongSec,
+	})
+	hello, _ := c.Start()
+	welcome, _, _ := s.Receive(hello)
+	initiate, _, _ := c.Receive(*welcome)
+
+	out, done, err := s.Receive(*initiate)
+	if !errors.Is(err, ErrAuthRejected) {
+		t.Fatalf("err = %v, want ErrAuthRejected", err)
+	}
+	if done {
+		t.Fatalf("done=true on auth reject")
+	}
+	if out == nil || out.Name != wire.ErrorCommandName {
+		t.Fatalf("out = %+v, want ERROR command", out)
+	}
+	ec, perr := wire.ParseError(*out)
+	if perr != nil {
+		t.Fatalf("ParseError(out): %v", perr)
+	}
+	if ec.Reason != "denied" {
+		t.Fatalf("reason = %q, want denied", ec.Reason)
+	}
+	if !strings.Contains(err.Error(), "denied") {
+		t.Fatalf("err %q does not include reason", err)
+	}
+
+	// Subsequent Receive returns ErrAlreadyFailed.
+	if _, _, err := s.Receive(*initiate); !errors.Is(err, ErrAlreadyFailed) {
+		t.Fatalf("Receive after reject = %v, want ErrAlreadyFailed", err)
+	}
+
+	// Client.Receive(ERROR) returns ErrPeerError with the reason.
+	if _, _, err := c.Receive(*out); !errors.Is(err, ErrPeerError) {
+		t.Fatalf("client.Receive(ERROR) = %v, want ErrPeerError", err)
+	}
+}
+
+func TestServerAuthRejectReasonSanitized(t *testing.T) {
+	clientLongPub, clientLongSec := makePair(t)
+	serverLongPub, serverLongSec := makePair(t)
+	dirty := "bad creds\n\x00user=alice"
+	rejecter := func(_ PublicKey, _ wire.Metadata) error { return errors.New(dirty) }
+	s, _ := NewServer(ServerOptions{
+		OurPublicKey: serverLongPub, OurSecretKey: &serverLongSec,
+		Authorizer: rejecter,
+	})
+	c, _ := NewClient(ClientOptions{
+		ServerKey: serverLongPub, OurPublicKey: clientLongPub, OurSecretKey: &clientLongSec,
+	})
+	hello, _ := c.Start()
+	welcome, _, _ := s.Receive(hello)
+	initiate, _, _ := c.Receive(*welcome)
+
+	out, _, _ := s.Receive(*initiate)
+	ec, _ := wire.ParseError(*out)
+	if strings.ContainsAny(ec.Reason, "\n\x00") {
+		t.Fatalf("reason %q has non-VCHAR bytes", ec.Reason)
+	}
+	if len(ec.Reason) != len(dirty) {
+		t.Fatalf("len(reason) = %d, want %d", len(ec.Reason), len(dirty))
+	}
+}
+
+func TestServerAuthRejectReasonTruncated(t *testing.T) {
+	clientLongPub, clientLongSec := makePair(t)
+	serverLongPub, serverLongSec := makePair(t)
+	long := strings.Repeat("a", 300)
+	rejecter := func(_ PublicKey, _ wire.Metadata) error { return errors.New(long) }
+	s, _ := NewServer(ServerOptions{
+		OurPublicKey: serverLongPub, OurSecretKey: &serverLongSec,
+		Authorizer: rejecter,
+	})
+	c, _ := NewClient(ClientOptions{
+		ServerKey: serverLongPub, OurPublicKey: clientLongPub, OurSecretKey: &clientLongSec,
+	})
+	hello, _ := c.Start()
+	welcome, _, _ := s.Receive(hello)
+	initiate, _, _ := c.Receive(*welcome)
+
+	out, _, _ := s.Receive(*initiate)
+	ec, _ := wire.ParseError(*out)
+	if len(ec.Reason) != 255 {
+		t.Fatalf("len(reason) = %d, want 255", len(ec.Reason))
+	}
+}
+
 // silence unused-import warnings for imports that fully grow in
 // subsequent tasks. Drop these placeholders once the appended tests
 // reference each import legitimately.
 var (
 	_ = bytes.Equal
-	_ = strings.Contains
 )
 
 // silence unused-import warning for crypto/rand (used by future tasks).
