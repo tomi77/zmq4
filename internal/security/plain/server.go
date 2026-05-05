@@ -103,7 +103,7 @@ func (s *ServerState) Receive(cmd wire.Command) (out *wire.Command, done bool, e
 // returned out command before closing the connection.
 func (s *ServerState) failAuthRejected(authErr error) (*wire.Command, bool, error) {
 	s.failed = true
-	reason := sanitizeReason(authErr.Error())
+	reason := seccommon.SanitizeReason(authErr.Error())
 	errCmd, encErr := wire.ErrorCommand{Reason: reason}.Encode()
 	if encErr != nil {
 		return nil, false, fmt.Errorf("plain: encode ERROR: %w", encErr)
