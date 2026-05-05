@@ -3,6 +3,7 @@ package plain
 import (
 	"fmt"
 
+	"github.com/tomi77/zmq4/internal/security"
 	"github.com/tomi77/zmq4/internal/security/seccommon"
 	"github.com/tomi77/zmq4/internal/wire"
 )
@@ -41,6 +42,24 @@ func (s *ServerState) Done() bool { return s.done && !s.failed }
 // PeerMetadata returns the metadata the client sent in INITIATE. Valid
 // only after Receive returned done=true.
 func (s *ServerState) PeerMetadata() wire.Metadata { return s.peer }
+
+// Wrap returns f unchanged. PLAIN does no traffic encapsulation.
+// Returns security.ErrNotDone if called before the handshake completes.
+func (s *ServerState) Wrap(f wire.Frame) (wire.Frame, error) {
+	if !s.Done() {
+		return wire.Frame{}, security.ErrNotDone
+	}
+	return f, nil
+}
+
+// Unwrap returns f unchanged. PLAIN does no traffic encapsulation.
+// Returns security.ErrNotDone if called before the handshake completes.
+func (s *ServerState) Unwrap(f wire.Frame) (wire.Frame, error) {
+	if !s.Done() {
+		return wire.Frame{}, security.ErrNotDone
+	}
+	return f, nil
+}
 
 // Receive consumes one peer command and advances the state machine.
 // See spec §4.2 for the contract.

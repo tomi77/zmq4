@@ -3,6 +3,7 @@ package plain
 import (
 	"fmt"
 
+	"github.com/tomi77/zmq4/internal/security"
 	"github.com/tomi77/zmq4/internal/security/seccommon"
 	"github.com/tomi77/zmq4/internal/wire"
 )
@@ -132,3 +133,21 @@ func (c *ClientState) failPeerError(cmd wire.Command) error {
 // command. Valid only after Receive returned done=true. The slice
 // aliases an internal buffer; callers must NOT mutate it.
 func (c *ClientState) PeerMetadata() wire.Metadata { return c.peer }
+
+// Wrap returns f unchanged. PLAIN does no traffic encapsulation.
+// Returns security.ErrNotDone if called before the handshake completes.
+func (c *ClientState) Wrap(f wire.Frame) (wire.Frame, error) {
+	if !c.Done() {
+		return wire.Frame{}, security.ErrNotDone
+	}
+	return f, nil
+}
+
+// Unwrap returns f unchanged. PLAIN does no traffic encapsulation.
+// Returns security.ErrNotDone if called before the handshake completes.
+func (c *ClientState) Unwrap(f wire.Frame) (wire.Frame, error) {
+	if !c.Done() {
+		return wire.Frame{}, security.ErrNotDone
+	}
+	return f, nil
+}

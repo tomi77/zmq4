@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tomi77/zmq4/internal/security"
 	"github.com/tomi77/zmq4/internal/wire"
 )
 
@@ -328,4 +329,69 @@ func TestClientStartAfterFailedReturnsAlreadyFailed(t *testing.T) {
 	if !errors.Is(err, ErrAlreadyFailed) {
 		t.Fatalf("Start after failure = %v, want ErrAlreadyFailed", err)
 	}
+}
+
+func TestPlainClientWrapBeforeDoneReturnsErrNotDone(t *testing.T) {
+	c, _ := NewClient(nil, nil, nil)
+	f := wire.Frame{Kind: wire.FrameMessage, Body: []byte("x")}
+	if _, err := c.Wrap(f); !errors.Is(err, security.ErrNotDone) {
+		t.Fatalf("Wrap before Done = %v, want security.ErrNotDone", err)
+	}
+}
+
+func TestPlainClientUnwrapBeforeDoneReturnsErrNotDone(t *testing.T) {
+	c, _ := NewClient(nil, nil, nil)
+	f := wire.Frame{Kind: wire.FrameMessage, Body: []byte("x")}
+	if _, err := c.Unwrap(f); !errors.Is(err, security.ErrNotDone) {
+		t.Fatalf("Unwrap before Done = %v, want security.ErrNotDone", err)
+	}
+}
+
+func TestPlainClientWrapPassthrough(t *testing.T) {
+	c := newPlainClientDone(t)
+	want := wire.Frame{Kind: wire.FrameMessage, More: true, Body: []byte("payload")}
+	got, err := c.Wrap(want)
+	if err != nil {
+		t.Fatalf("Wrap: %v", err)
+	}
+	if got.Kind != want.Kind || got.More != want.More || !bytes.Equal(got.Body, want.Body) {
+		t.Fatalf("Wrap mutated frame: got=%+v want=%+v", got, want)
+	}
+}
+
+func TestPlainClientUnwrapPassthrough(t *testing.T) {
+	c := newPlainClientDone(t)
+	want := wire.Frame{Kind: wire.FrameMessage, More: false, Body: []byte("payload")}
+	got, err := c.Unwrap(want)
+	if err != nil {
+		t.Fatalf("Unwrap: %v", err)
+	}
+	if got.Kind != want.Kind || got.More != want.More || !bytes.Equal(got.Body, want.Body) {
+		t.Fatalf("Unwrap mutated frame: got=%+v want=%+v", got, want)
+	}
+}
+
+func newPlainClientDone(t *testing.T) *ClientState {
+	t.Helper()
+	c, err := NewClient([]byte("u"), []byte("p"), nil)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	if _, err := c.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if _, _, err := c.Receive(encodeWelcome()); err != nil {
+		t.Fatalf("Receive(WELCOME): %v", err)
+	}
+	peerReady, err := wire.ReadyCommand{}.Encode()
+	if err != nil {
+		t.Fatalf("encode peer READY: %v", err)
+	}
+	if _, _, err := c.Receive(peerReady); err != nil {
+		t.Fatalf("Receive(READY): %v", err)
+	}
+	if !c.Done() {
+		t.Fatalf("not done")
+	}
+	return c
 }
