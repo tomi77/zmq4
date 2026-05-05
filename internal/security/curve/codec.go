@@ -428,3 +428,56 @@ func parseReady(cmd wire.Command, sharedKey *SharedKey) (wire.Metadata, error) {
 	}
 	return md, nil
 }
+
+// messageMinBodyLen = 8-byte short-nonce + 1-byte flags + 16-byte overhead.
+const messageMinBodyLen = 8 + 1 + 16
+
+// encodeMessage seals (flags || payload) under sharedKey with the given
+// per-direction prefix. nonce is the short-nonce counter; the caller
+// guarantees monotonicity (ClientState/ServerState do this).
+func encodeMessage(flags byte, payload []byte, sharedKey *SharedKey, prefix [16]byte, nonce uint64) (wire.Command, error) {
+	body := make([]byte, 8+1+len(payload)+16)
+	binary.BigEndian.PutUint64(body[:8], nonce)
+
+	plaintext := make([]byte, 1+len(payload))
+	plaintext[0] = flags
+	copy(plaintext[1:], payload)
+
+	var nacl [24]byte
+	copy(nacl[:16], prefix[:])
+	binary.BigEndian.PutUint64(nacl[16:], nonce)
+
+	out := box.SealAfterPrecomputation(nil, plaintext, &nacl, (*[32]byte)(sharedKey))
+	if len(out) != len(plaintext)+16 {
+		return wire.Command{}, fmt.Errorf("curve: internal: message-box len=%d want %d", len(out), len(plaintext)+16)
+	}
+	copy(body[8:], out)
+	return wire.Command{Name: messageCommandName, Data: body}, nil
+}
+
+// parseMessage opens a peer MESSAGE. prefix selects the direction
+// (caller-supplied; ClientState reads with messageServerPrefix,
+// ServerState reads with messageClientPrefix).
+func parseMessage(cmd wire.Command, sharedKey *SharedKey, prefix [16]byte) (byte, []byte, uint64, error) {
+	if cmd.Name != messageCommandName {
+		return 0, nil, 0, fmt.Errorf("%w: command name %q", ErrMalformedMessage, cmd.Name)
+	}
+	if len(cmd.Data) < messageMinBodyLen {
+		return 0, nil, 0, fmt.Errorf("%w: body size %d, want ≥ %d", ErrMalformedMessage, len(cmd.Data), messageMinBodyLen)
+	}
+	nonce := binary.BigEndian.Uint64(cmd.Data[:8])
+
+	var nacl [24]byte
+	copy(nacl[:16], prefix[:])
+	binary.BigEndian.PutUint64(nacl[16:], nonce)
+
+	plain, ok := box.OpenAfterPrecomputation(nil, cmd.Data[8:], &nacl, (*[32]byte)(sharedKey))
+	if !ok {
+		return 0, nil, 0, fmt.Errorf("%w: message", ErrBoxOpen)
+	}
+	if len(plain) < 1 {
+		return 0, nil, 0, fmt.Errorf("%w: plaintext too short", ErrMalformedMessage)
+	}
+	flags := plain[0]
+	return flags, plain[1:], nonce, nil
+}

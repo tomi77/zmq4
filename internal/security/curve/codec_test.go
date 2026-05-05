@@ -497,3 +497,110 @@ func TestParseReadyRejectsTamperedBox(t *testing.T) {
 		t.Fatalf("err = %v, want ErrBoxOpen", err)
 	}
 }
+
+func TestEncodeMessageRoundTrip(t *testing.T) {
+	clientTransPub, clientTransSec := makePair(t)
+	serverTransPub, serverTransSec := makePair(t)
+	afterReadyClient := precompute(serverTransPub, &clientTransSec)
+	afterReadyServer := precompute(clientTransPub, &serverTransSec)
+
+	for _, tc := range []struct {
+		name    string
+		flags   byte
+		payload []byte
+	}{
+		{"empty", 0x00, []byte{}},
+		{"more", 0x01, []byte("hi")},
+		{"large", 0x00, bytes.Repeat([]byte{0xAB}, 4096)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd, err := encodeMessage(tc.flags, tc.payload, afterReadyClient, messageClientPrefix, 7)
+			if err != nil {
+				t.Fatalf("encodeMessage: %v", err)
+			}
+			if cmd.Name != messageCommandName {
+				t.Fatalf("cmd.Name = %q, want %q", cmd.Name, messageCommandName)
+			}
+			gotFlags, gotPayload, gotNonce, err := parseMessage(cmd, afterReadyServer, messageClientPrefix)
+			if err != nil {
+				t.Fatalf("parseMessage: %v", err)
+			}
+			if gotNonce != 7 {
+				t.Fatalf("nonce = %d, want 7", gotNonce)
+			}
+			if gotFlags != tc.flags {
+				t.Fatalf("flags = %#x, want %#x", gotFlags, tc.flags)
+			}
+			if !bytes.Equal(gotPayload, tc.payload) {
+				t.Fatalf("payload differs: got %x want %x", gotPayload, tc.payload)
+			}
+		})
+	}
+}
+
+func TestParseMessageRejectsWrongName(t *testing.T) {
+	_, sk := makePair(t)
+	shared := precompute(PublicKey{1}, &sk)
+	bad := wire.Command{Name: "READY", Data: make([]byte, 25)}
+	if _, _, _, err := parseMessage(bad, shared, messageClientPrefix); !errors.Is(err, ErrMalformedMessage) {
+		t.Fatalf("err = %v, want ErrMalformedMessage", err)
+	}
+}
+
+func TestParseMessageRejectsTooSmall(t *testing.T) {
+	_, sk := makePair(t)
+	shared := precompute(PublicKey{1}, &sk)
+	bad := wire.Command{Name: messageCommandName, Data: []byte{0x01}}
+	if _, _, _, err := parseMessage(bad, shared, messageClientPrefix); !errors.Is(err, ErrMalformedMessage) {
+		t.Fatalf("err = %v, want ErrMalformedMessage", err)
+	}
+}
+
+func TestParseMessageRejectsTamperedBox(t *testing.T) {
+	clientTransPub, clientTransSec := makePair(t)
+	serverTransPub, serverTransSec := makePair(t)
+	afterReadyClient := precompute(serverTransPub, &clientTransSec)
+	afterReadyServer := precompute(clientTransPub, &serverTransSec)
+
+	cmd, _ := encodeMessage(0x00, []byte("payload"), afterReadyClient, messageClientPrefix, 1)
+	cmd.Data[len(cmd.Data)-1] ^= 0x01
+	if _, _, _, err := parseMessage(cmd, afterReadyServer, messageClientPrefix); !errors.Is(err, ErrBoxOpen) {
+		t.Fatalf("err = %v, want ErrBoxOpen", err)
+	}
+}
+
+func TestParseMessageRejectsWrongPrefix(t *testing.T) {
+	clientTransPub, clientTransSec := makePair(t)
+	serverTransPub, serverTransSec := makePair(t)
+	afterReadyClient := precompute(serverTransPub, &clientTransSec)
+	afterReadyServer := precompute(clientTransPub, &serverTransSec)
+
+	// Encode with client→server prefix; try to parse with server→client.
+	cmd, _ := encodeMessage(0x00, []byte("payload"), afterReadyClient, messageClientPrefix, 1)
+	if _, _, _, err := parseMessage(cmd, afterReadyServer, messageServerPrefix); !errors.Is(err, ErrBoxOpen) {
+		t.Fatalf("err = %v, want ErrBoxOpen", err)
+	}
+}
+
+func TestEncodeMessageEmptyPayload(t *testing.T) {
+	clientTransPub, clientTransSec := makePair(t)
+	serverTransPub, serverTransSec := makePair(t)
+	afterReadyClient := precompute(serverTransPub, &clientTransSec)
+	afterReadyServer := precompute(clientTransPub, &serverTransSec)
+
+	cmd, err := encodeMessage(0x00, nil, afterReadyClient, messageClientPrefix, 1)
+	if err != nil {
+		t.Fatalf("encodeMessage(nil): %v", err)
+	}
+	// Body = 8 (nonce) + 1 (flags) + 0 (payload) + 16 (overhead) = 25.
+	if got := len(cmd.Data); got != 25 {
+		t.Fatalf("body len = %d, want 25", got)
+	}
+	gotFlags, gotPayload, _, err := parseMessage(cmd, afterReadyServer, messageClientPrefix)
+	if err != nil {
+		t.Fatalf("parseMessage: %v", err)
+	}
+	if gotFlags != 0x00 || len(gotPayload) != 0 {
+		t.Fatalf("flags=%#x payload=%x, want 0x00 + empty", gotFlags, gotPayload)
+	}
+}
