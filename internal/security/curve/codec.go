@@ -244,3 +244,64 @@ func parseWelcome(cmd wire.Command, sharedKey *SharedKey) (PublicKey, cookie, er
 	copy(ck[:], plain[32:])
 	return serverTransPub, ck, nil
 }
+
+// vouch is the 96-byte authenticator embedded inside INITIATE.
+type vouch [96]byte
+
+// encodeVouch builds the vouch box that goes inside INITIATE.
+// vouchShared is precompute(serverLongPub, clientLongSec) = c × S — the
+// long-term × long-term shared key. ClientState.Start computes this
+// eagerly so the long-term secret is touched once at construction;
+// vouchShared is then zeroed by ClientState.Receive(WELCOME) right
+// after this function returns.
+//
+// serverLongPub is passed alongside vouchShared because it is part of
+// the box plaintext (vouch authenticates the bond between C' and S).
+// rng supplies the 16-byte long-nonce; pass nil for crypto/rand.Reader.
+func encodeVouch(clientTransPub, serverLongPub PublicKey, vouchShared *SharedKey, rng io.Reader) (vouch, error) {
+	if rng == nil {
+		rng = rand.Reader
+	}
+	var v vouch
+	if _, err := io.ReadFull(rng, v[:16]); err != nil {
+		return vouch{}, fmt.Errorf("%w: %v", ErrCryptoRand, err)
+	}
+	var nacl [24]byte
+	copy(nacl[:8], vouchNoncePrefix[:])
+	copy(nacl[8:], v[:16])
+
+	var plaintext [64]byte
+	copy(plaintext[:32], clientTransPub[:])
+	copy(plaintext[32:], serverLongPub[:])
+
+	out := box.SealAfterPrecomputation(nil, plaintext[:], &nacl, (*[32]byte)(vouchShared))
+	if len(out) != 80 {
+		return vouch{}, fmt.Errorf("curve: internal: vouch-box len=%d want 80", len(out))
+	}
+	copy(v[16:], out)
+	return v, nil
+}
+
+// openVouch inverts encodeVouch. The server uses the client's long-term
+// public (which it has just learned from INITIATE) and its own
+// long-term secret. Returns the inner (C', S) that must match the
+// values the server already knows; failure to match indicates an
+// impersonation attempt and returns ErrBoxOpen.
+func openVouch(v vouch, clientLongPub PublicKey, serverLongSec *SecretKey) (PublicKey, PublicKey, error) {
+	var nacl [24]byte
+	copy(nacl[:8], vouchNoncePrefix[:])
+	copy(nacl[8:], v[:16])
+
+	plain, ok := box.Open(nil, v[16:], &nacl, (*[32]byte)(&clientLongPub), (*[32]byte)(serverLongSec))
+	if !ok {
+		return PublicKey{}, PublicKey{}, fmt.Errorf("%w: vouch", ErrBoxOpen)
+	}
+	if len(plain) != 64 {
+		return PublicKey{}, PublicKey{}, fmt.Errorf("curve: internal: vouch plaintext len=%d", len(plain))
+	}
+	var c1 PublicKey
+	var s PublicKey
+	copy(c1[:], plain[:32])
+	copy(s[:], plain[32:])
+	return c1, s, nil
+}

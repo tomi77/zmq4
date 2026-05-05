@@ -249,3 +249,51 @@ func TestOpenCookieRejectsWrongKey(t *testing.T) {
 		t.Fatalf("err = %v, want ErrBoxOpen", err)
 	}
 }
+
+func TestEncodeVouchRoundTrip(t *testing.T) {
+	clientLongPub, clientLongSec := makePair(t)
+	serverLongPub, serverLongSec := makePair(t)
+	clientTransPub, _ := makePair(t)
+
+	vouchShared := precompute(serverLongPub, &clientLongSec) // c × S
+	v, err := encodeVouch(clientTransPub, serverLongPub, vouchShared, rand.Reader)
+	if err != nil {
+		t.Fatalf("encodeVouch: %v", err)
+	}
+	gotC1, gotS, err := openVouch(v, clientLongPub, &serverLongSec)
+	if err != nil {
+		t.Fatalf("openVouch: %v", err)
+	}
+	if gotC1 != clientTransPub {
+		t.Fatalf("C' = %x, want %x", gotC1, clientTransPub)
+	}
+	if gotS != serverLongPub {
+		t.Fatalf("S = %x, want %x", gotS, serverLongPub)
+	}
+}
+
+func TestOpenVouchRejectsTampered(t *testing.T) {
+	clientLongPub, clientLongSec := makePair(t)
+	serverLongPub, serverLongSec := makePair(t)
+	clientTransPub, _ := makePair(t)
+
+	vouchShared := precompute(serverLongPub, &clientLongSec)
+	v, _ := encodeVouch(clientTransPub, serverLongPub, vouchShared, rand.Reader)
+	v[len(v)-1] ^= 0x01
+	if _, _, err := openVouch(v, clientLongPub, &serverLongSec); !errors.Is(err, ErrBoxOpen) {
+		t.Fatalf("err = %v, want ErrBoxOpen", err)
+	}
+}
+
+func TestOpenVouchRejectsWrongClientLongPub(t *testing.T) {
+	_, clientLongSec := makePair(t)
+	serverLongPub, serverLongSec := makePair(t)
+	clientTransPub, _ := makePair(t)
+
+	vouchShared := precompute(serverLongPub, &clientLongSec)
+	v, _ := encodeVouch(clientTransPub, serverLongPub, vouchShared, rand.Reader)
+	otherPub, _ := makePair(t)
+	if _, _, err := openVouch(v, otherPub, &serverLongSec); !errors.Is(err, ErrBoxOpen) {
+		t.Fatalf("err = %v, want ErrBoxOpen", err)
+	}
+}
