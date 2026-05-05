@@ -315,6 +315,20 @@ func TestNullWrapPassthrough(t *testing.T) {
 	}
 }
 
+func TestNullWrapAliasesInputBody(t *testing.T) {
+	s := newDoneState(t)
+	body := []byte("payload")
+	in := wire.Frame{Kind: wire.FrameMessage, Body: body}
+	got, err := s.Wrap(in)
+	if err != nil {
+		t.Fatalf("Wrap: %v", err)
+	}
+	// NULL is pass-through: returned Body must alias the input.
+	if len(got.Body) > 0 && len(body) > 0 && &got.Body[0] != &body[0] {
+		t.Fatalf("Wrap allocated a new buffer; pass-through must alias input")
+	}
+}
+
 func TestNullUnwrapPassthrough(t *testing.T) {
 	s := newDoneState(t)
 	want := wire.Frame{Kind: wire.FrameMessage, More: false, Body: []byte("payload")}

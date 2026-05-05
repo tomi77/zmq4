@@ -22,7 +22,7 @@ func randCurveMetadata(rng *mrand.Rand) wire.Metadata {
 	n := rng.Intn(len(names) + 1)
 	used := map[string]bool{}
 	var md wire.Metadata
-	for i := 0; i < n; i++ {
+	for range n {
 		name := names[rng.Intn(len(names))]
 		if used[name] {
 			continue
@@ -122,7 +122,7 @@ func TestCurveHappyPathProperty(t *testing.T) {
 		}
 
 		// 32 round-trips of random frames in alternating directions.
-		for i := 0; i < 32; i++ {
+		for i := range 32 {
 			body := make([]byte, rng.Intn(257))
 			rng.Read(body)
 			more := rng.Intn(2) == 1

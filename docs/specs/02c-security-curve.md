@@ -253,11 +253,15 @@ type Mechanism interface {
     // (linked via MORE) are wrapped one frame at a time: each frame
     // becomes its own MESSAGE command with its own nonce.
     //
-    // The returned Frame's Body is freshly allocated and owned by the
-    // caller. Wrap consumes f synchronously: it MUST read whatever it
-    // needs from f.Body before returning and MUST NOT retain or mutate
-    // any reference to f. The caller is therefore free to reuse, mutate,
-    // or release f.Body the instant Wrap returns.
+    // For pass-through mechanisms (NULL, PLAIN), the returned Frame
+    // aliases f. For mechanisms that perform encapsulation (CURVE), the
+    // returned Frame's Body is freshly allocated and independent of f.
+    // In all cases the State retains no reference to f. Wrap consumes f
+    // synchronously: it MUST read whatever it needs from f.Body before
+    // returning and MUST NOT retain or mutate any reference to f. The
+    // caller is therefore free to reuse, mutate, or release f.Body the
+    // instant Wrap returns; the only constraint is that the caller must
+    // not mutate f.Body while the returned Frame is still in use.
     Wrap(f wire.Frame) (wire.Frame, error)
 
     // Unwrap inverts Wrap.
@@ -270,17 +274,24 @@ type Mechanism interface {
     //               the inner flags byte (bit 0), and Body is the
     //               decrypted payload.
     //
-    // The returned Frame's Body is freshly allocated and independent of
-    // f. Unwrap consumes f synchronously: same lifetime rule as Wrap —
-    // the caller may reuse f.Body immediately upon return.
+    // For pass-through mechanisms (NULL, PLAIN), the returned Frame
+    // aliases f. For mechanisms that perform encapsulation (CURVE), the
+    // returned Frame's Body is freshly allocated and independent of f.
+    // In all cases the State retains no reference to f. Unwrap consumes
+    // f synchronously: it MUST read whatever it needs from f.Body before
+    // returning and MUST NOT retain or mutate any reference to f. The
+    // caller is therefore free to reuse, mutate, or release f.Body the
+    // instant Unwrap returns; the only constraint is that the caller
+    // must not mutate f.Body while the returned Frame is still in use.
     Unwrap(f wire.Frame) (wire.Frame, error)
 
     // Done reports whether the handshake completed successfully.
     Done() bool
 
     // PeerMetadata returns the metadata advertised by the peer in its
-    // handshake. Valid only after Done(). The returned Metadata aliases
-    // an internal buffer; callers MUST NOT mutate it.
+    // handshake. Valid only after Done(). The returned slice is owned
+    // by the Mechanism and remains valid until the Mechanism is
+    // discarded; callers MUST NOT mutate it.
     PeerMetadata() wire.Metadata
 }
 
@@ -902,8 +913,8 @@ so the test thresholds are reviewable.
 
 | Operation | Expected allocations | Notes |
 |-----------|---------------------|-------|
-| `ClientState.Wrap(f)` | 2 | one `[]byte` for `wire.Command.Data` (short-nonce + box ciphertext), one `[]byte` for the returned `wire.Frame.Body` (the encoded MESSAGE command). |
-| `ClientState.Unwrap(f)` | 1 | one `[]byte` for the decrypted payload, returned as `wire.Frame.Body`. |
+| `ClientState.Wrap(f)` | 3 (per `testing.AllocsPerRun`) | NaCl plaintext buffer + box ciphertext + encoded MESSAGE wire.Frame body. |
+| `ClientState.Unwrap(f)` | 2 (per `testing.AllocsPerRun`) | parsed Command + decrypted payload returned as `wire.Frame.Body`. |
 | `ServerState.Wrap` / `Unwrap` | identical to client | symmetric path. |
 | `Start` (client) | ~3 | transient keypair (1), handshakeShared+vouchShared precomputed key buffers (2). |
 | `Receive(WELCOME)` (client) | ~3 | afterReady precomputed key buffer (1), INITIATE ciphertext (1), encoded INITIATE command bytes (1). |

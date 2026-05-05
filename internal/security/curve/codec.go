@@ -104,7 +104,7 @@ func parseHello(cmd wire.Command, sharedKey *SharedKey) (PublicKey, error) {
 	if cmd.Data[0] != 0x01 || cmd.Data[1] != 0x00 {
 		return PublicKey{}, fmt.Errorf("%w: bad version %x %x", ErrMalformedHello, cmd.Data[0], cmd.Data[1])
 	}
-	for i := 0; i < 72; i++ {
+	for i := range 72 {
 		if cmd.Data[2+i] != 0 {
 			return PublicKey{}, fmt.Errorf("%w: non-zero padding at byte %d", ErrMalformedHello, 2+i)
 		}
@@ -307,7 +307,9 @@ func openVouch(v vouch, clientLongPub PublicKey, serverLongSec *SecretKey) (Publ
 }
 
 // initiateMinBodyLen is the minimum INITIATE body size:
-//   cookie (96) + initiate-nonce (8) + box-overhead (16) + vouch (96) + C (32)
+//
+//	cookie (96) + initiate-nonce (8) + box-overhead (16) + vouch (96) + C (32)
+//
 // = 248 B (when metadata is empty).
 const initiateMinBodyLen = 96 + 8 + 16 + 96 + 32
 

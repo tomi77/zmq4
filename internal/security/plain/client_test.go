@@ -359,6 +359,19 @@ func TestPlainClientWrapPassthrough(t *testing.T) {
 	}
 }
 
+func TestPlainClientWrapAliasesInputBody(t *testing.T) {
+	c := newPlainClientDone(t)
+	body := []byte("payload")
+	in := wire.Frame{Kind: wire.FrameMessage, Body: body}
+	got, err := c.Wrap(in)
+	if err != nil {
+		t.Fatalf("Wrap: %v", err)
+	}
+	if len(got.Body) > 0 && len(body) > 0 && &got.Body[0] != &body[0] {
+		t.Fatalf("Wrap allocated a new buffer; pass-through must alias input")
+	}
+}
+
 func TestPlainClientUnwrapPassthrough(t *testing.T) {
 	c := newPlainClientDone(t)
 	want := wire.Frame{Kind: wire.FrameMessage, More: false, Body: []byte("payload")}
