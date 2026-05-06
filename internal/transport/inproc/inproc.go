@@ -1,0 +1,94 @@
+package inproc
+
+import (
+	"context"
+	"fmt"
+	"net"
+
+	"github.com/tomi77/zmq4/internal/transport"
+)
+
+// Listen registers name in the inproc registry and returns a net.Listener.
+// If the name is already bound, returns ErrInprocAlreadyBound.
+//
+// Listen drains any pending Dialers on the same name in FIFO order,
+// pairing each with a fresh net.Pipe. The drain runs after registry.mu is
+// released so it never blocks under the global lock.
+//
+// ctx is currently unused — Listen does not block.
+func Listen(_ context.Context, name string) (net.Listener, error) {
+	if name == "" {
+		return nil, fmt.Errorf("%w: empty inproc name", transport.ErrEndpointMalformed)
+	}
+
+	registry.mu.Lock()
+	if _, exists := registry.bound[name]; exists {
+		registry.mu.Unlock()
+		return nil, fmt.Errorf("%w: %q", transport.ErrInprocAlreadyBound, name)
+	}
+	lis := newInprocListener(name)
+	registry.bound[name] = lis
+	drainSnap := registry.pending[name]
+	delete(registry.pending, name)
+	registry.mu.Unlock()
+
+	// Drain off-lock. FIFO order preserved by slice traversal.
+	for _, pd := range drainSnap {
+		a, b := net.Pipe()
+		lis.enqueue(a)
+		// cap-1 send — non-blocking by construction.
+		pd.ready <- acceptResult{conn: b}
+	}
+
+	return lis, nil
+}
+
+// Close, Accept, Addr methods.
+
+func (l *inprocListener) Close() error {
+	registry.mu.Lock()
+	if registry.bound[l.name] == l {
+		delete(registry.bound, l.name)
+	}
+	registry.mu.Unlock()
+	l.closeOnce.Do(func() {
+		close(l.closed)
+		select {
+		case l.notify <- struct{}{}:
+		default:
+		}
+	})
+	return nil
+}
+
+func (l *inprocListener) Addr() net.Addr {
+	return inprocAddr{l.name}
+}
+
+func (l *inprocListener) Accept() (net.Conn, error) {
+	for {
+		l.qmu.Lock()
+		if len(l.queue) > 0 {
+			c := l.queue[0]
+			l.queue = l.queue[1:]
+			l.qmu.Unlock()
+			return c, nil
+		}
+		// queue empty — check closed before parking.
+		select {
+		case <-l.closed:
+			l.qmu.Unlock()
+			return nil, net.ErrClosed
+		default:
+		}
+		l.qmu.Unlock()
+
+		// Park until either a notify ping or close.
+		select {
+		case <-l.notify:
+			// loop, re-check queue + closed
+		case <-l.closed:
+			// loop will observe closed in step 1+2
+		}
+	}
+}
