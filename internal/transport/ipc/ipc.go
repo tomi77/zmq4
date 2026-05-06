@@ -8,7 +8,7 @@ import (
 	"net"
 	"os"
 
-	"github.com/tomi77/zmq4/internal/transport"
+	"github.com/tomi77/zmq4/internal/transport/internal/sentinels"
 )
 
 // Listen opens a Unix domain socket listener at path. After bind the
@@ -17,7 +17,7 @@ import (
 // resolve names).
 func Listen(_ context.Context, path string) (*net.UnixListener, error) {
 	if path == "" {
-		return nil, fmt.Errorf("%w: empty ipc path", transport.ErrEndpointMalformed)
+		return nil, fmt.Errorf("%w: empty ipc path", sentinels.ErrEndpointMalformed)
 	}
 	addr := &net.UnixAddr{Name: path, Net: "unix"}
 	lis, err := net.ListenUnix("unix", addr)
@@ -35,7 +35,7 @@ func Listen(_ context.Context, path string) (*net.UnixListener, error) {
 // Dial opens a Unix domain connection to path. ctx bounds the connect.
 func Dial(ctx context.Context, path string) (*net.UnixConn, error) {
 	if path == "" {
-		return nil, fmt.Errorf("%w: empty ipc path", transport.ErrEndpointMalformed)
+		return nil, fmt.Errorf("%w: empty ipc path", sentinels.ErrEndpointMalformed)
 	}
 	d := net.Dialer{}
 	c, err := d.DialContext(ctx, "unix", path)

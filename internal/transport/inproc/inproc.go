@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/tomi77/zmq4/internal/transport"
+	"github.com/tomi77/zmq4/internal/transport/internal/sentinels"
 )
 
 // Listen registers name in the inproc registry and returns a net.Listener.
@@ -18,13 +18,13 @@ import (
 // ctx is currently unused — Listen does not block.
 func Listen(_ context.Context, name string) (net.Listener, error) {
 	if name == "" {
-		return nil, fmt.Errorf("%w: empty inproc name", transport.ErrEndpointMalformed)
+		return nil, fmt.Errorf("%w: empty inproc name", sentinels.ErrEndpointMalformed)
 	}
 
 	registry.mu.Lock()
 	if _, exists := registry.bound[name]; exists {
 		registry.mu.Unlock()
-		return nil, fmt.Errorf("%w: %q", transport.ErrInprocAlreadyBound, name)
+		return nil, fmt.Errorf("%w: %q", sentinels.ErrInprocAlreadyBound, name)
 	}
 	lis := newInprocListener(name)
 	registry.bound[name] = lis
@@ -111,7 +111,7 @@ func (l *inprocListener) Accept() (net.Conn, error) {
 // name pairs the dial, or ctx is cancelled.
 func Dial(ctx context.Context, name string) (net.Conn, error) {
 	if name == "" {
-		return nil, fmt.Errorf("%w: empty inproc name", transport.ErrEndpointMalformed)
+		return nil, fmt.Errorf("%w: empty inproc name", sentinels.ErrEndpointMalformed)
 	}
 
 	registry.mu.Lock()
