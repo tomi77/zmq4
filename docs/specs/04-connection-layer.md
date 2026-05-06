@@ -185,6 +185,10 @@ override per-socket as policy dictates.
 //   io.ErrUnexpectedEOF                 mid-frame truncation.
 //   *ErrPeerError                       peer sent an ERROR command.
 //   net.ErrClosed / io.ErrClosedPipe    after Close().
+//   wire.ErrFrameTooLarge               peer body exceeds maxFrameBodySize cap.
+//   wire.ErrInvalidCommand              malformed FrameCommand body, wrapped
+//                                       via fmt.Errorf("conn: bad post-handshake command: %w", …).
+//                                       F4 does NOT emit a wire-level ERROR back; F5 owns close (see §6.4).
 //   any error from mech.Unwrap          wrapped via fmt.Errorf with %w.
 //
 // FrameMessage frames are passed through mech.Unwrap (NULL/PLAIN: alias;
@@ -566,12 +570,17 @@ constructs a transient handshake FrameReader `hsfr` capped at
 5. return *Conn
 ```
 
-`emitERROR(fw, reason)` is an internal helper that builds an ERROR
-command body via `wire.ErrorCommand{Reason: reason}.Encode()`,
-encodes it via `wire.EncodeCommand`, and calls
-`fw.WriteFrame(wire.Frame{Kind: FrameCommand, Body: body})`. Errors
-from the write are intentionally swallowed (the conn is being torn
-down anyway).
+`emitERROR(fw, reason)` is an internal helper that:
+
+1. Truncates `reason` to ≤ 255 bytes (RFC 23 §6 caps ERROR reason at
+   one OCTET length prefix). Truncation is silent — the conn is being
+   torn down and the reason is diagnostic.
+2. Builds an ERROR command body via
+   `wire.ErrorCommand{Reason: reason}.Encode()`, encodes it via
+   `wire.EncodeCommand`, calls
+   `fw.WriteFrame(wire.Frame{Kind: FrameCommand, Body: body})`.
+3. Swallows all errors (encode + write). The conn is being torn down;
+   ERROR delivery is best-effort.
 
 ### 6.3 Handshake driver — passive (server)
 
@@ -1007,6 +1016,12 @@ Helpers under `internal/conn/interop/fixture/`:
     forwards it to `mech.Unwrap` which yields a CURVE-specific error.
     Whether that should map to a dedicated F4 sentinel
     (`ErrUnencryptedFrame`?) is a judgement call; defer.
+    **Note for F2c maintainers:** §3.3 / §6.4 of this spec rely on
+    `curve.{Client,Server}State.Unwrap` returning *some* identifiable
+    error when handed a non-MESSAGE frame post-handshake (currently a
+    descriptive sentinel from `internal/security/curve`). If that
+    contract is ever loosened (e.g. silent pass-through), F4's
+    error-discrimination story must be revisited.
 13. **F5/F4 close ordering.** When F5 wants to drop a conn while
     another goroutine is mid-`WriteFrame`, the writer's Wrap call may
     have already allocated a fresh body slice (CURVE) that is then
