@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tomi77/zmq4/internal/transport"
+	"github.com/tomi77/zmq4/internal/transport/internal/sentinels"
 )
 
 func newSocketPath(t *testing.T) string {
@@ -68,7 +68,7 @@ func TestListenDialRoundTrip(t *testing.T) {
 func TestListenEmptyPath(t *testing.T) {
 	ctx := context.Background()
 	_, err := Listen(ctx, "")
-	if !errors.Is(err, transport.ErrEndpointMalformed) {
+	if !errors.Is(err, sentinels.ErrEndpointMalformed) {
 		t.Fatalf("Listen(\"\") err = %v, want ErrEndpointMalformed", err)
 	}
 }
@@ -76,7 +76,7 @@ func TestListenEmptyPath(t *testing.T) {
 func TestDialEmptyPath(t *testing.T) {
 	ctx := context.Background()
 	_, err := Dial(ctx, "")
-	if !errors.Is(err, transport.ErrEndpointMalformed) {
+	if !errors.Is(err, sentinels.ErrEndpointMalformed) {
 		t.Fatalf("Dial(\"\") err = %v, want ErrEndpointMalformed", err)
 	}
 }

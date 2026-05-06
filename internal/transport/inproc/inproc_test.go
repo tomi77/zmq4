@@ -10,12 +10,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tomi77/zmq4/internal/transport"
+	"github.com/tomi77/zmq4/internal/transport/internal/sentinels"
 )
 
 func TestListenEmptyName(t *testing.T) {
 	_, err := Listen(context.Background(), "")
-	if !errors.Is(err, transport.ErrEndpointMalformed) {
+	if !errors.Is(err, sentinels.ErrEndpointMalformed) {
 		t.Fatalf("Listen(\"\") err = %v, want ErrEndpointMalformed", err)
 	}
 }
@@ -31,7 +31,7 @@ func TestListenAlreadyBound(t *testing.T) {
 	defer lis1.Close()
 
 	_, err = Listen(ctx, name)
-	if !errors.Is(err, transport.ErrInprocAlreadyBound) {
+	if !errors.Is(err, sentinels.ErrInprocAlreadyBound) {
 		t.Fatalf("second Listen err = %v, want ErrInprocAlreadyBound", err)
 	}
 }

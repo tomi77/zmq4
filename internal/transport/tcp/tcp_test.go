@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tomi77/zmq4/internal/transport"
+	"github.com/tomi77/zmq4/internal/transport/internal/sentinels"
 )
 
 func TestListenDialRoundTrip(t *testing.T) {
@@ -263,7 +263,7 @@ func TestDialMalformed(t *testing.T) {
 			if err == nil {
 				t.Fatalf("Dial(%q) = nil error, want ErrEndpointMalformed", in)
 			}
-			if !errors.Is(err, transport.ErrEndpointMalformed) {
+			if !errors.Is(err, sentinels.ErrEndpointMalformed) {
 				t.Fatalf("err = %v, want errors.Is(ErrEndpointMalformed)", err)
 			}
 		})
