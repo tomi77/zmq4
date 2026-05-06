@@ -382,3 +382,65 @@ func TestCancelRacingDrain(t *testing.T) {
 		_ = lis.Close()
 	}
 }
+
+func TestDeadline(t *testing.T) {
+	ctx := context.Background()
+	name := "test/" + t.Name()
+	lis, _ := Listen(ctx, name)
+	defer lis.Close()
+
+	type p struct {
+		c net.Conn
+		e error
+	}
+	ch := make(chan p, 1)
+	go func() {
+		c, e := lis.Accept()
+		ch <- p{c, e}
+	}()
+	dc, _ := Dial(ctx, name)
+	defer dc.Close()
+	got := <-ch
+	defer got.c.Close()
+
+	_ = dc.SetReadDeadline(time.Now().Add(20 * time.Millisecond))
+	buf := make([]byte, 4)
+	_, err := dc.Read(buf)
+	if err == nil {
+		t.Fatalf("Read with past deadline = nil, want timeout")
+	}
+	var ne net.Error
+	if !errors.As(err, &ne) || !ne.Timeout() {
+		t.Fatalf("Read err = %v, want net.Error{Timeout=true}", err)
+	}
+}
+
+func TestPeerCloseEOF(t *testing.T) {
+	ctx := context.Background()
+	name := "test/" + t.Name()
+	lis, _ := Listen(ctx, name)
+	defer lis.Close()
+
+	type p struct {
+		c net.Conn
+		e error
+	}
+	ch := make(chan p, 1)
+	go func() {
+		c, e := lis.Accept()
+		ch <- p{c, e}
+	}()
+	dc, _ := Dial(ctx, name)
+	got := <-ch
+
+	_ = dc.Close()
+	buf := make([]byte, 4)
+	_, err := got.c.Read(buf)
+	if err == nil {
+		t.Fatalf("Read after peer close = nil, want EOF")
+	}
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("Read err = %v, want io.EOF", err)
+	}
+	got.c.Close()
+}
