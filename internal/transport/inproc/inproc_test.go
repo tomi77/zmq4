@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"strconv"
 	"testing"
 	"time"
 
@@ -329,5 +330,55 @@ func TestQueuedConnsDeliveredAfterClose(t *testing.T) {
 	// Second Accept must return ErrClosed.
 	if _, err := lis.Accept(); !errors.Is(err, net.ErrClosed) {
 		t.Fatalf("Accept after queue drained err = %v, want net.ErrClosed", err)
+	}
+}
+
+// TestCancelRacingDrain stresses the case where ctx fires concurrently
+// with Listen-drain. Either Dial wins the conn (drain raced first) or
+// Dial returns ctx.Err and the orphan conn is closed. Both outcomes are
+// valid; what's invalid is goroutine/fd leak or panic.
+func TestCancelRacingDrain(t *testing.T) {
+	parent := context.Background()
+	for i := 0; i < 200; i++ {
+		name := "test/race/" + t.Name() + "/" + strconv.Itoa(i)
+		ctx, cancel := context.WithCancel(parent)
+
+		type p struct {
+			c net.Conn
+			e error
+		}
+		ch := make(chan p, 1)
+		go func() {
+			c, e := Dial(ctx, name)
+			ch <- p{c, e}
+		}()
+		// Schedule cancel and Listen at "the same time" — Go scheduler
+		// arbitrates which goroutine wins.
+		go cancel()
+		lis, err := Listen(parent, name)
+		if err != nil {
+			t.Fatalf("[%d] Listen: %v", i, err)
+		}
+		// Drain Accept regardless of Dial outcome.
+		go func() {
+			c, _ := lis.Accept()
+			if c != nil {
+				c.Close()
+			}
+		}()
+
+		got := <-ch
+		switch {
+		case got.e == nil && got.c != nil:
+			got.c.Close() // Dial won the race
+		case got.e != nil && got.c == nil:
+			if !errors.Is(got.e, context.Canceled) && !errors.Is(got.e, context.DeadlineExceeded) {
+				t.Fatalf("[%d] Dial err = %v, want context error", i, got.e)
+			}
+		default:
+			t.Fatalf("[%d] inconsistent Dial result: c=%v err=%v", i, got.c, got.e)
+		}
+
+		_ = lis.Close()
 	}
 }
