@@ -59,6 +59,20 @@ Forbidden dependencies (per `00-meta-overview.md` §3): `socket`. Allowed:
 F1, F2, F3, standard library, `golang.org/x/crypto` (transitively via
 F2c). No `cgo`.
 
+F4 work also lands two **additive amendments to F1** and one to **F2**
+(detailed in §2.1 and Open Q §9.2/§9.4):
+
+- F1 gains `wire.MessageCommandName = "MESSAGE"` (symmetric with
+  `ReadyCommandName` / `ErrorCommandName`). F2c stops shadow-defining it.
+- F1 gains `wire.ReadGreetingPhaseA(io.Reader) error` helper used by
+  F4's lockstep greeting reader; F1's existing `ReadGreeting` is
+  refactored to use it.
+- F2 (`security.Mechanism`) gains `Name() string`, implemented trivially
+  by all five existing states.
+
+All three are additive on frozen surfaces — frozen tags
+`phase-1-wire-complete`, `phase-2a/2b/2c-…-complete` remain valid.
+
 ## 2. Mapping to RFC 23/ZMTP 3.1
 
 | RFC 23 § | F4 covers |
@@ -72,9 +86,9 @@ F2c). No `cgo`.
 | §5.1 PING/PONG heartbeat | **No.** Pass-through only; operational heartbeat in F6. |
 | §6 ERROR command (handshake or mid-traffic abort) | **Yes** — handshake: returns `ErrHandshakeFail` wrapping the reason. Mid-traffic: `ReadFrame` returns `*ErrPeerError` carrying the reason. |
 | Multipart messages (MORE bit chains) | **Yes** — preserved verbatim through `ReadFrame`/`WriteFrame`. |
-| ZMTP 3.0 / 2.0 / 1.0 fallback | **No.** Per `00-meta-overview.md` §7, only 3.1. Peer with version major ≠ 3 → `ErrUnsupportedVersion`. |
+| ZMTP 3.0 / 2.0 / 1.0 fallback | **No.** Per `00-meta-overview.md` §7, only 3.1. Peer with version major ≠ 3 → wrapped `wire.ErrUnsupportedVersion`. |
 | Socket-type compatibility check (RFC 23 §2.4 metadata semantics) | **No.** F4 ferries `Socket-Type` and other metadata properties; semantic compatibility (e.g. `REQ` may only talk to `REP`/`ROUTER`) lives in F5. |
-| ZAP (RFC 27) authentication for PLAIN/CURVE | **No.** Mechanism-level. F2b/F2c expose an `Authenticator` callback; F6 will provide a ZAP-backed implementation. |
+| ZAP (RFC 27) authentication for PLAIN/CURVE | **No.** Mechanism-level. F2b exposes an `Authenticator` callback (`plain.Authenticator`); F2c does not yet have an equivalent. F6 will provide ZAP-backed implementations for both. |
 
 ### 2.1 Additive changes to F2 (amendments)
 
@@ -176,7 +190,7 @@ override per-socket as policy dictates.
 // FrameMessage frames are passed through mech.Unwrap (NULL/PLAIN: alias;
 // CURVE: not expected on this path — see §6.4). FrameCommand frames are
 // inspected by name:
-//   "MESSAGE"                  → mech.Unwrap (CURVE post-handshake data).
+//   wire.MessageCommandName    → mech.Unwrap (CURVE post-handshake data).
 //   "ERROR"                    → return *ErrPeerError with parsed reason.
 //   anything else (SUBSCRIBE,
 //   CANCEL, PING, PONG, …)     → return verbatim to F5.
@@ -199,9 +213,10 @@ func (c *Conn) WriteFrame(f wire.Frame) error
 
 // PeerMetadata returns the metadata advertised by the peer in handshake
 // (READY for NULL, INITIATE+READY merge for PLAIN/CURVE — exact set
-// determined by the mechanism). Read-only; valid for the lifetime of
-// the Conn. Per F2c §2.1 the slice is owned by the mechanism; callers
-// MUST NOT mutate it.
+// determined by the mechanism). The returned Metadata is a defensive
+// clone made at handshake completion (§4.2): it is owned by *Conn,
+// stable for the lifetime of the *Conn, and decoupled from the
+// mechanism. Callers MUST NOT mutate it (no enforcement; convention).
 func (c *Conn) PeerMetadata() wire.Metadata
 
 // Close closes the underlying raw conn and releases any in-flight reader
@@ -214,7 +229,9 @@ func (c *Conn) PeerMetadata() wire.Metadata
 func (c *Conn) Close() error
 
 // RemoteAddr / LocalAddr delegate to the underlying raw net.Conn. For
-// inproc, the addr.Network() is "inproc" per F3 §5.4.
+// inproc, the addr.Network() is "inproc" per F3 §5.4. Stable for the
+// lifetime of the *Conn including post-Close (stdlib net.Conn permits
+// addr access after Close).
 func (c *Conn) RemoteAddr() net.Addr
 func (c *Conn) LocalAddr() net.Addr
 ```
@@ -291,10 +308,10 @@ Each `WithX(n)` panics on `n <= 0` (mirrors `wire.WithMaxBodySize`).
 ```go
 type Conn struct {
     raw      net.Conn
-    fr       *wire.FrameReader   // wraps raw with maxFrameBodySize
-    fw       *wire.FrameWriter   // wraps raw
+    fr       *wire.FrameReader   // post-handshake reader, capped at cfg.maxFrameBodySize
+    fw       *wire.FrameWriter   // shared by handshake and post-handshake (no per-frame cap)
     mech     security.Mechanism
-    peerMeta wire.Metadata       // snapshot at handshake done
+    peerMeta wire.Metadata       // defensive clone snapshotted at handshake done
 
     writeMu  sync.Mutex          // serialises WriteFrame; never held across Wrap
 
@@ -307,17 +324,60 @@ The closeMu/closed pair (instead of `sync.Once` plus a channel) keeps the
 closed-check inline with the read/write path's existing critical section
 choices. Close itself is idempotent.
 
-`fr` owns no buffer beyond F1's standard 9-byte header; each `ReadFrame`
-allocates a fresh body slice (F1 §7). `fw` is stateless apart from the
-underlying writer reference.
+**FrameReader lifecycle.** `wire.FrameReader.maxBodySize` is set at
+construction and cannot be re-tuned (F1 §`FrameReader`). F4 therefore
+uses **two distinct FrameReaders**:
+
+1. A **transient handshake FrameReader**, constructed inside the
+   handshake driver via `wire.NewFrameReader(raw,
+   wire.WithMaxBodySize(cfg.maxHandshakeCommandSize))`, used for the
+   handshake command exchange and discarded once `mech.Done()`.
+2. A **post-handshake FrameReader** (`c.fr`), constructed *after* the
+   handshake completes via
+   `wire.NewFrameReader(raw, wire.WithMaxBodySize(cfg.maxFrameBodySize))`,
+   stashed on the `*Conn`, and used by `ReadFrame` for the lifetime of
+   the conn.
+
+This split keeps the security cap (small handshake frames) and the
+data cap (large post-handshake messages) as two independent invariants.
+Both readers share the same underlying `raw` byte stream; the
+transient reader is dropped before the persistent one is created so
+there is no concurrent `Read` race.
+
+`fw` is stateless apart from the underlying writer reference and is
+constructed once at the start of the handshake; it is reused
+post-handshake.
+
+**peerMeta defensive clone.** At handshake done, F4 calls
+`seccommon.CloneMetadata(mech.PeerMetadata())` (helper from F2c) and
+stores the result in `c.peerMeta`. This decouples the *Conn from
+mechanism lifetime — F5 may discard the mechanism reference for GC
+without invalidating `c.PeerMetadata()`. Cost is one allocation per
+handshake; functionally negligible.
 
 ### 4.3 Greeting helpers
 
-F4 sends the full 64-byte greeting via `wire.WriteGreeting`, but reads in
-two phases (lockstep, §6.1). The 11-byte phase-A buffer and the 53-byte
-phase-B buffer are stack-allocated arrays in the handshake function; no
-new exported helpers in `internal/wire`. (Promotion of an
-`io.Reader`-based phase-A helper is filed as Open Q §9.2.)
+F4 sends the full 64-byte greeting via `wire.WriteGreeting`, then reads
+in two phases (lockstep, §6.1). Per the decision in Open Q §9.2 (made
+in spec review 2026-05-06), F4 work lands an additive F1 amendment:
+
+```go
+// internal/wire (new export)
+//
+// ReadGreetingPhaseA reads the first 11 bytes of a ZMTP 3.1 greeting
+// (signature 10 B + version major 1 B), validates them, and returns.
+// Truncated input → io.ErrUnexpectedEOF. Bad signature →
+// ErrInvalidSignature. Major version != 0x03 → ErrUnsupportedVersion.
+func ReadGreetingPhaseA(r io.Reader) error
+```
+
+`ReadGreeting` is refactored to call `ReadGreetingPhaseA` followed by
+reading the remaining 53 bytes and calling the existing
+`DecodeGreeting`. F4 §6.1 step 1–2 (phase-A read + validate) becomes
+one helper call; step 3–4 (read remaining 53 B + DecodeGreeting) stays
+inline so F4 can short-circuit on phase-A failure without paying for
+the remaining read. The phase-B buffer is a stack-allocated 53-byte
+array in the handshake function.
 
 ### 4.4 Allocation profile
 
@@ -335,7 +395,6 @@ allocations are dominated by F1's body slices. **No
 var (
     ErrNoDeadline           = errors.New("conn: ctx must carry a deadline")
     ErrInvalidGreeting      = errors.New("conn: invalid ZMTP greeting")
-    ErrUnsupportedVersion   = errors.New("conn: peer ZMTP version unsupported")
     ErrMechanismMismatch    = errors.New("conn: mechanism mismatch with peer")
     ErrRoleConflict         = errors.New("conn: as-server role conflict with peer")
     ErrHandshakeFail        = errors.New("conn: handshake aborted")
@@ -348,6 +407,15 @@ var (
 Wrapping: every error returned by a constructor is `fmt.Errorf("%w: ...",
 sentinel, ...)` with context (mechanism name, side, raw conn `RemoteAddr`).
 F5 uses `errors.Is` to discriminate.
+
+**Version mismatch.** F4 deliberately does NOT define a
+`conn.ErrUnsupportedVersion`. The wire layer already exports
+`wire.ErrUnsupportedVersion` (returned by `wire.DecodeGreeting` when
+version major or minor does not match 3.1). F4 wraps that sentinel via
+`%w` in two places: (a) the phase-A early major-version check (§6.1
+step 2), and (b) the phase-B `DecodeGreeting` call (§6.1 step 4). F5
+checks `errors.Is(err, wire.ErrUnsupportedVersion)`. One sentinel, one
+condition.
 
 ### 5.2 ErrPeerError
 
@@ -394,18 +462,23 @@ The full 64-byte greeting is sent via `wire.WriteGreeting` in a single
 `Write`. Reading is two-phase per RFC 23 §3.2:
 
 ```
-1. io.ReadFull(raw, hdr[:11])
-2. validate hdr[0] == 0xFF
-   validate hdr[1..9] == 0x00 each
-   validate hdr[9] == 0x7F
-   validate hdr[10] == 0x03                  (version major)
-   on any failure → ErrInvalidGreeting or ErrUnsupportedVersion;
+1. err := wire.ReadGreetingPhaseA(raw)
+   on signature failure → wrap wire.ErrInvalidSignature as ErrInvalidGreeting.
+   on version major != 0x03 → wrap wire.ErrUnsupportedVersion (forwarded via %w).
    abort BEFORE reading the remaining 53 bytes.
-3. io.ReadFull(raw, hdr[11:64])
-4. peerG, err := wire.DecodeGreeting(hdr[:])
-   (validates minor == 0x01, mechanism format, as-server in {0,1})
-5. if peerG.Mechanism != mech.Name() → ErrMechanismMismatch.
-6. if mech.Name() ∈ {"PLAIN", "CURVE"}:
+2. io.ReadFull(raw, rest[:53])
+3. // Reconstruct the full 64-byte buffer for DecodeGreeting:
+   var buf [wire.GreetingSize]byte
+   buf[0] = 0xFF                       // already validated by ReadGreetingPhaseA
+   // bytes 1..8 are zero (post-validation)
+   buf[9] = 0x7F
+   buf[10] = 0x03
+   copy(buf[11:], rest[:])
+   peerG, err := wire.DecodeGreeting(buf[:])
+   (validates minor == 0x01 — wraps wire.ErrUnsupportedVersion if not;
+    validates mechanism format and as-server in {0,1}; F4 forwards via %w)
+4. if peerG.Mechanism != mech.Name() → ErrMechanismMismatch.
+5. if mech.Name() ∈ {"PLAIN", "CURVE"}:
         if peerG.AsServer == ourSide {
             ErrRoleConflict
         }
@@ -413,31 +486,51 @@ The full 64-byte greeting is sent via `wire.WriteGreeting` in a single
         // ignore as-server (RFC 23 §3.3.2: no semantic meaning).
 ```
 
+(Alternative: have `ReadGreetingPhaseA` return the raw 11 bytes and
+splice them with the 53-byte remainder before `DecodeGreeting`. Same
+effect; spec leaves the reconstruction shape to the implementer.)
+
 **Send/receive ordering.** The two sides are not symmetric:
 
 - **Client (active):** send full greeting → read peer greeting (lockstep).
 - **Server (passive):** read peer greeting (lockstep) → send full greeting.
 
-Asymmetry exists to avoid deadlock on inproc (`net.Pipe` is synchronous
-per F3 §4.4 — concurrent `Write` from both sides would block both Reads
-indefinitely). For tcp/ipc the kernel buffer accepts 64 B without
-blocking, so functionally equivalent. Open Q §9.1 notes that a
-short-lived send goroutine could symmetrise this and shave 1 RTT off the
-TCP connect path.
+The asymmetry exists to avoid deadlock on inproc. `net.Pipe` (F3's
+backing for inproc per §5.4) is **fully synchronous** — a `Write` of N
+bytes blocks until the peer's `Read` consumes all N. If both sides
+attempted to `Write` their greeting first, both would block in `Write`
+with neither side reading, deadlocking the handshake. The asymmetric
+ordering pins at least one side in `Read` while the other is in
+`Write` at all times: the server's first system call is `Read`, which
+matches the client's `Write` of its 64-byte greeting. Once the
+client's bytes have flowed, the server `Write`s its greeting and the
+client (now in phase-A `Read`) consumes those bytes.
+
+For tcp/ipc the kernel buffer accepts 64 B without blocking, so the
+ordering is functionally equivalent; the asymmetry is required only
+for inproc correctness. Open Q §9.1 notes that a short-lived send
+goroutine could symmetrise this and shave 1 RTT off the TCP connect
+path under high latency.
 
 ### 6.2 Handshake driver — active (client)
 
-After greeting succeeds:
+After greeting succeeds, F4 has a working `fw` (FrameWriter on raw) and
+constructs a transient handshake FrameReader `hsfr` capped at
+`cfg.maxHandshakeCommandSize`:
 
 ```
+0. hsfr := wire.NewFrameReader(raw, wire.WithMaxBodySize(cfg.maxHandshakeCommandSize))
 1. cmd, err := mech.Start()
-   if err: emit ERROR(reason=err.Error()); abort with err.
+   if err:
+       // Greeting succeeded so fw is usable. Emit ERROR before aborting so
+       // the peer sees a clean termination instead of an unexplained EOF.
+       emitERROR(fw, err.Error())   // best-effort; ignore Write error
+       return ErrHandshakeFail wrapping err.
 2. body, _ := wire.EncodeCommand(cmd)
    fw.WriteFrame(wire.Frame{Kind: FrameCommand, Body: body})
 3. loop:
-     f, err := fr.ReadFrame()
-       fr is configured with WithMaxBodySize(cfg.maxHandshakeCommandSize).
-       err handling: io.EOF / io.ErrUnexpectedEOF → ErrHandshakeFail("peer closed mid-handshake").
+     f, err := hsfr.ReadFrame()
+       err handling: io.EOF / io.ErrUnexpectedEOF → ErrHandshakeFail wrapping "peer closed mid-handshake".
                      wire.ErrFrameTooLarge → ErrCommandTooLarge.
                      other → forward via %w.
      if f.Kind != wire.FrameCommand: ErrUnexpectedFrame.
@@ -446,34 +539,53 @@ After greeting succeeds:
      if cmd.Name == wire.ErrorCommandName:
         ec, _ := wire.ParseError(cmd)
         return ErrHandshakeFail wrapping "peer ERROR: " + ec.Reason.
-     enforceMetadataCap(cmd, cfg.maxMetadataSize)
-       For metadata-bearing commands (READY, and INITIATE in PLAIN/CURVE
-       per F2b §2/F2c §3), len(cmd.Data) > cap → emit ERROR; abort with
-       ErrMetadataTooLarge. Other commands have non-metadata bodies and
-       skip this check; the per-command body cap (cfg.maxHandshakeCommandSize)
-       still applies via the FrameReader cap above.
+     enforceMetadataCap(cmd, cfg.maxMetadataSize):
+       For metadata-bearing commands (READY for NULL/PLAIN/CURVE; INITIATE
+       for PLAIN/CURVE per F2b §2/F2c §3), len(cmd.Data) > cap → emit ERROR;
+       abort with ErrMetadataTooLarge. The cap is on the wire-level body
+       (cmd.Data), not on plaintext metadata — for CURVE INITIATE that body
+       is encrypted (cookie + vouch box + sealed metadata blob), so the cap
+       acts as a wire-allocation bound and only implicitly bounds the
+       plaintext metadata size (which is ≤ ciphertext size). This is
+       defensible because the goal of the cap is to prevent unbounded
+       allocation before decryption, not to enforce a plaintext-policy
+       limit. Non-metadata-bearing commands (HELLO, WELCOME) skip this
+       check; their body sizes are bounded by the per-command FrameReader
+       cap above.
      out, done, err := mech.Receive(cmd)
      if err:
-        emit ERROR(reason=err.Error())
+        emitERROR(fw, err.Error())
         return ErrHandshakeFail wrapping err.
      if out != nil:
         body, _ := wire.EncodeCommand(*out)
         fw.WriteFrame(wire.Frame{Kind: FrameCommand, Body: body})
      if done: break.
-4. c.peerMeta = mech.PeerMetadata()
+4. // hsfr falls out of scope; build the persistent post-handshake reader.
+   c.fr = wire.NewFrameReader(raw, wire.WithMaxBodySize(cfg.maxFrameBodySize))
+   c.peerMeta = seccommon.CloneMetadata(mech.PeerMetadata())
 5. return *Conn
 ```
 
+`emitERROR(fw, reason)` is an internal helper that builds an ERROR
+command body via `wire.ErrorCommand{Reason: reason}.Encode()`,
+encodes it via `wire.EncodeCommand`, and calls
+`fw.WriteFrame(wire.Frame{Kind: FrameCommand, Body: body})`. Errors
+from the write are intentionally swallowed (the conn is being torn
+down anyway).
+
 ### 6.3 Handshake driver — passive (server)
 
-Same as §6.2 minus step 1–2 (no `Start`); the loop runs from the very
-beginning, the first `fr.ReadFrame` reads the client's first handshake
-command. All other steps (metadata cap, command cap, ERROR detection,
-mech-emitted ERROR on failure) are identical.
+Same as §6.2 starting from step 0, then jumping straight into the loop
+(step 3) — no `Start()` call. The first `hsfr.ReadFrame` reads the
+client's first handshake command. All other steps (metadata cap,
+command cap, ERROR detection, mech-emitted ERROR on failure,
+post-handshake FrameReader construction, peerMeta clone) are
+identical.
 
 `mech.Receive` may return `done=true` while also returning a non-nil
-`out`. F4 emits `out` first, then breaks the loop. Mirrors F2b §4
-"server's READY is the last frame the server sends" behaviour.
+`out`. F4 emits `out` first, then breaks the loop. This is the
+server's terminal frame for PLAIN (`server.go:111-112`) and CURVE
+(`server.go:203-204`).
 
 ### 6.4 Post-handshake `ReadFrame` (§3.3 expanded)
 
@@ -495,7 +607,7 @@ if err != nil:
     return wire.Frame{}, fmt.Errorf("conn: bad post-handshake command: %w", err)
 
 switch cmd.Name {
-case "MESSAGE":
+case wire.MessageCommandName:
     return c.mech.Unwrap(f)            // CURVE-only data path.
 case wire.ErrorCommandName:
     ec, perr := wire.ParseError(cmd)
@@ -507,11 +619,22 @@ default:
 }
 ```
 
-The literal string `"MESSAGE"` matches `internal/security/curve`'s
-private `messageCommandName`. Promotion to a public `wire.MessageCommandName`
-constant is filed as Open Q §9.4 — for the initial F4 implementation a
-local `const messageCommandName = "MESSAGE"` in `internal/conn` suffices
-and is documented as a "shadow constant" comment.
+`wire.MessageCommandName` is added to F1 as part of F4 work (additive
+amendment — see Open Q §9.4 for rationale). It mirrors the existing
+`wire.ReadyCommandName`, `wire.ErrorCommandName`, etc.; the same string
+`"MESSAGE"` is currently a private constant in `internal/security/curve`
+and the F4 amendment promotes it to the wire layer where the other
+ZMTP command names live. F2c will then reference the wire constant
+instead of redefining it.
+
+**No ERROR-on-malformed-peer.** When `wire.ParseCommand` fails on a
+post-handshake FrameCommand body, F4 returns the wrapped parse error
+to F5 and does NOT emit a wire-level ERROR back to the peer. RFC 23
+§6 permits but does not mandate this; emitting ERROR here would
+require write-path access from the read goroutine and complicates the
+goroutine model (see §6.8). F5 owns connection close on protocol
+violation; if that policy needs to change, it is an Open Q for F5
+design, not F4.
 
 ### 6.5 Post-handshake `WriteFrame`
 
@@ -536,6 +659,16 @@ commands (PING/PONG/SUBSCRIBE/CANCEL) must NOT be wrapped. F4 enforces
 this by skipping `mech.Wrap` for any FrameCommand. NULL/PLAIN are
 unaffected — their `Wrap` is a no-op alias either way.
 
+**Partial-write / Close race.** A concurrent `Close` may complete
+between the `closed` check (under `writeMu`) and the `fw.WriteFrame`
+call's underlying syscall. In that case the write returns
+`net.ErrClosed` (or `io.ErrClosedPipe` for inproc) or a partial-write
+error mid-frame. Both surface via the `WriteFrame` return value; F5
+treats either as "conn died, drop it". F4 makes no atomicity
+guarantee across the closed-check and the syscall — the
+`writeMu`/`closed` pair only serialises *between* WriteFrame calls,
+not against Close.
+
 ### 6.6 Context cancellation watcher
 
 Both constructors run for the duration of the handshake. To honour
@@ -545,7 +678,10 @@ Both constructors run for the duration of the handshake. To honour
 1. require ctx.Deadline non-zero; else ErrNoDeadline (raw untouched).
 2. raw.SetDeadline(ctx-deadline-time)
 3. done := make(chan struct{})
+   var wg sync.WaitGroup
+   wg.Add(1)
 4. go func() {
+       defer wg.Done()
        select {
        case <-ctx.Done():
            raw.SetDeadline(time.Unix(1, 0))   // unblock any in-flight I/O
@@ -553,10 +689,20 @@ Both constructors run for the duration of the handshake. To honour
            // handshake finished; let watcher exit.
        }
    }()
-5. run handshake; on completion or error, close(done).
+5. run handshake; on completion or error, close(done); wg.Wait().
 6. on success: raw.SetDeadline(time.Time{}); return *Conn.
 7. on error: raw.Close(); return wrapped error.
 ```
+
+The `wg.Wait()` after `close(done)` is **load-bearing**, not defensive.
+Without it, the watcher's `select` arm might pick `<-ctx.Done()` (if
+cancel races with handshake completion) and call `SetDeadline(past)`
+*after* step 6 cleared the deadline. The post-handshake `*Conn` would
+then have a stuck past deadline and the next `ReadFrame` would return
+`os.ErrDeadlineExceeded` despite no actual error. Waiting for the
+watcher to exit before clearing the deadline closes that race: the
+watcher is guaranteed to have observed `<-done` and skipped the
+SetDeadline path before the main goroutine clears it.
 
 `ErrNoDeadline` is enforced because F2b §3 wants F4 to bound the
 handshake. Requiring an explicit deadline forces F5 to make a choice
@@ -620,7 +766,8 @@ Each test uses `net.Pipe()` for raw to keep tests pure and deterministic.
   consuming the remaining 53 bytes (assert via byte counter on a
   spy reader).
 - **TestGreetingVersionDowngrade** — peer sends `0x02` for major version;
-  assert `ErrUnsupportedVersion` and early abort.
+  assert `errors.Is(err, wire.ErrUnsupportedVersion)` and early abort
+  (assert via byte counter that the remaining 53 bytes are NOT read).
 - **TestMechanismMismatch** — client says NULL, server says PLAIN; assert
   `ErrMechanismMismatch` on both sides.
 - **TestRoleConflict** — two PLAIN servers meet; assert `ErrRoleConflict`.
@@ -647,6 +794,16 @@ Each test uses `net.Pipe()` for raw to keep tests pure and deterministic.
   `Receive` returns an error; assert F4 emits an ERROR command before
   closing (verify via byte spy on raw), and the constructor returns
   wrapped error.
+- **TestHandshakeMechStartError** — inject a mock `ClientMechanism`
+  whose `Start` returns an error post-greeting; assert F4 emits an
+  ERROR command before closing and returns wrapped `ErrHandshakeFail`.
+- **TestHandshakeUnexpectedFrame** — peer sends a `FrameMessage`
+  during the handshake exchange (not a `FrameCommand`); assert
+  `errors.Is(err, ErrUnexpectedFrame)`.
+- **TestGreetingFillerIgnored** — peer sends a greeting whose filler
+  bytes (33–63) are non-zero garbage; assert the handshake proceeds
+  normally. Pins the §9.9 decision against future regressions where
+  someone might tighten filler validation.
 
 ### 7.2 Unit — post-handshake traffic (`conn_test.go`)
 
@@ -663,6 +820,11 @@ Each test uses `net.Pipe()` for raw to keep tests pure and deterministic.
   FrameCommand verbatim.
 - **TestPostHandshakePeerERROR** — peer writes an ERROR command; local
   `ReadFrame` returns `*ErrPeerError` with the parsed reason.
+- **TestPostHandshakeMalformedCommand** — peer writes a `FrameCommand`
+  with a junk body (zero-length, missing name, non-letter chars in
+  name); assert `ReadFrame` returns an error wrapping
+  `wire.ErrInvalidCommand` with the `"conn: bad post-handshake
+  command"` prefix; assert F4 does NOT emit an ERROR back per §6.4.
 - **TestPostHandshakeWriteAfterClose** — Close, then WriteFrame; assert
   `errors.Is(err, net.ErrClosed)`.
 - **TestPostHandshakeReadAfterClose** — Close, then ReadFrame; assert
@@ -687,6 +849,11 @@ synthetic round-trip through `net.Pipe`, asserting:
 - Post-handshake, the mech's `Wrap`/`Unwrap` invariants hold for a
   representative FrameMessage.
 - `PeerMetadata` is non-nil and round-trips a known property.
+- **Metadata independence:** after handshake, holding a reference to
+  `c.PeerMetadata()` and dropping all references to the original
+  `mech` (forcing GC) does not invalidate the metadata. Pins the §4.2
+  defensive-clone decision against a future regression that aliases
+  mech-owned bytes.
 
 This is the table that F5 will reuse as a smoke check for any new
 mechanism added later.
@@ -724,7 +891,7 @@ Per §2 and the meta plan §6.
   - 3 × 2 × 2 × 3 = **36 happy-path tests**.
 - **Negative interop.**
   - `version-mismatch` — libzmq forced to advertise ZMTP 3.0 (via env
-    var or wrapper); assert our side returns `ErrUnsupportedVersion`.
+    var or wrapper); assert our side returns wrapped `wire.ErrUnsupportedVersion`.
   - `mechanism-mismatch` — libzmq runs PLAIN, we run NULL; assert clean
     abort on both sides.
   - **2 negative tests.**
@@ -767,8 +934,13 @@ Helpers under `internal/conn/interop/fixture/`:
   phase tag, per memory `feedback_modernize_after_phase`).
 - Spec §1–§7 fully implemented; §9 open questions remain open or are
   explicitly closed.
+- F1 amendments merged: `wire.MessageCommandName` constant added;
+  `wire.ReadGreetingPhaseA` helper added with `ReadGreeting`
+  refactored to use it; spec doc updated in
+  `01-zmtp-wire-protocol.md`.
 - F2 amendments (§2.1) merged: `Name() string` on five mech states;
-  spec docs updated in F2a/F2b/F2c.
+  spec docs updated in F2a/F2b/F2c. F2c stops shadow-defining
+  `messageCommandName` and references the wire constant.
 
 ## 8. Open questions
 
@@ -778,10 +950,14 @@ Helpers under `internal/conn/interop/fixture/`:
    connect under high latency. Reopen if benchmarks (post-F5) show
    connect time dominated by greeting.
 2. **Phase-A greeting helper in `internal/wire`.** F4 hand-rolls the
-   11-byte signature+version-major read inline. A
-   `wire.ReadGreetingSignature(io.Reader) error` helper would be tidier
-   and let F1 amend `ReadGreeting` to reuse it. Defer until F4 is in;
-   amendment to `01-zmtp-wire-protocol.md` if added.
+   11-byte signature+version-major read inline. **Decision (2026-05-06,
+   in spec review):** promote a `wire.ReadGreetingPhaseA(io.Reader)
+   error` helper as part of F4 work — additive amendment to
+   `01-zmtp-wire-protocol.md`. The helper reads 11 bytes, validates
+   signature + version major, returns wrapped `wire.ErrInvalidSignature`
+   or `wire.ErrUnsupportedVersion`. F1's `ReadGreeting` is refactored to
+   call `ReadGreetingPhaseA` followed by reading the remaining 53
+   bytes. F4 §6.1 step 1–2 then becomes one helper call.
 3. **`ErrNoDeadline` strictness.** Some callers (test fixtures, simple
    demos) might prefer F4 to apply a generous default if ctx has no
    deadline. The strict policy (require explicit deadline) is chosen
@@ -789,13 +965,14 @@ Helpers under `internal/conn/interop/fixture/`:
    contract. Reopen only on concrete usability complaints from F5.
 4. **`MessageCommandName` constant promotion.** F4 needs the literal
    `"MESSAGE"` to identify CURVE-encrypted data frames in the
-   post-handshake stream. Currently it lives as a private constant in
-   `internal/security/curve`. Three options: (a) leave a shadow
-   constant in `internal/conn` (simplest, picked for initial impl);
-   (b) promote to `wire.MessageCommandName` (symmetric with
-   `ReadyCommandName`, `ErrorCommandName`, etc. — F1 amendment); (c)
-   add a `Mechanism.IsTrafficData(f wire.Frame) bool` method (over-
-   engineered). Defer to F4 review; (b) is the most likely landing.
+   post-handshake stream. **Decision (2026-05-06, in spec review):**
+   promote `wire.MessageCommandName = "MESSAGE"` as part of F4 work —
+   additive amendment to `01-zmtp-wire-protocol.md`, symmetric with
+   `wire.ReadyCommandName`, `wire.ErrorCommandName`, etc. F2c will
+   reference the wire constant instead of redefining
+   `messageCommandName` privately. The "shadow constant in conn" and
+   "Mechanism.IsTrafficData" alternatives are rejected — wire layer is
+   the canonical home for ZMTP command names.
 5. **Mid-traffic ERROR sender on our side.** F4 does not currently
    emit ERROR commands after the handshake completes — only during
    handshake on local mech failure. RFC 23 §6 allows mid-traffic
@@ -809,9 +986,10 @@ Helpers under `internal/conn/interop/fixture/`:
    (both `as-server=0`) on inproc handshake successfully because NULL
    is symmetric per RFC 23 §3.3.2. Edge case with no practical
    significance; covered by `TestRoleConflictNULLIgnored`.
-8. **PeerMetadata mutability.** F4 returns `wire.Metadata` from
-   `mech.PeerMetadata` without copying. F2 spec mandates read-only.
-   F5 callers MUST NOT mutate. Documented in §3.3.
+8. **PeerMetadata mutability.** F4 returns a defensive clone (§4.2)
+   so the *Conn does not depend on the mechanism's lifetime. Callers
+   MUST NOT mutate; convention only, not enforced. Reopen if
+   benchmarks show the clone matters under high connect rate.
 9. **Greeting filler validation.** RFC 23 §3.2 says bytes 33–63 are
    filler (any value). F4 does not validate filler — consistent with
    `wire.DecodeGreeting`. No action.
