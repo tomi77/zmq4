@@ -151,3 +151,52 @@ func TestConnectBlocksUntilBind(t *testing.T) {
 		t.Fatalf("Dial did not unblock after Listen within 1s")
 	}
 }
+
+func TestConnectCancelledByContext(t *testing.T) {
+	parent := context.Background()
+	name := "test/" + t.Name()
+	ctx, cancel := context.WithTimeout(parent, 25*time.Millisecond)
+	defer cancel()
+
+	c, err := Dial(ctx, name)
+	if err == nil {
+		c.Close()
+		t.Fatalf("Dial = %v, want context error", c)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Dial err = %v, want errors.Is(context.DeadlineExceeded)", err)
+	}
+
+	// Verify pending entry is cleaned up.
+	registry.mu.Lock()
+	defer registry.mu.Unlock()
+	if list, ok := registry.pending[name]; ok && len(list) > 0 {
+		t.Fatalf("pending[%q] = %d entries after cancel, want 0", name, len(list))
+	}
+}
+
+func TestConnectCancelledManually(t *testing.T) {
+	parent := context.Background()
+	name := "test/" + t.Name()
+	ctx, cancel := context.WithCancel(parent)
+
+	type p struct {
+		c net.Conn
+		e error
+	}
+	ch := make(chan p, 1)
+	go func() {
+		c, e := Dial(ctx, name)
+		ch <- p{c, e}
+	}()
+	time.Sleep(20 * time.Millisecond) // let Dial enqueue
+	cancel()
+
+	got := <-ch
+	if got.e == nil {
+		t.Fatalf("Dial = %v, want cancel error", got.c)
+	}
+	if !errors.Is(got.e, context.Canceled) {
+		t.Fatalf("err = %v, want errors.Is(context.Canceled)", got.e)
+	}
+}
