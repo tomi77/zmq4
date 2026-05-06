@@ -200,3 +200,134 @@ func TestConnectCancelledManually(t *testing.T) {
 		t.Fatalf("err = %v, want errors.Is(context.Canceled)", got.e)
 	}
 }
+
+func TestCloseUnblocksAccept(t *testing.T) {
+	ctx := context.Background()
+	name := "test/" + t.Name()
+	lis, err := Listen(ctx, name)
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, e := lis.Accept()
+		errCh <- e
+	}()
+	time.Sleep(20 * time.Millisecond) // let Accept park
+
+	if err := lis.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	select {
+	case e := <-errCh:
+		if !errors.Is(e, net.ErrClosed) {
+			t.Fatalf("Accept err = %v, want net.ErrClosed", e)
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("Accept did not unblock within 1s")
+	}
+}
+
+func TestBindRebindAfterClose(t *testing.T) {
+	ctx := context.Background()
+	name := "test/" + t.Name()
+
+	lis1, err := Listen(ctx, name)
+	if err != nil {
+		t.Fatalf("first Listen: %v", err)
+	}
+	if err := lis1.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	lis2, err := Listen(ctx, name)
+	if err != nil {
+		t.Fatalf("second Listen: %v", err)
+	}
+	defer lis2.Close()
+}
+
+func TestPendingDialBetweenCloseAndRebind(t *testing.T) {
+	ctx := context.Background()
+	name := "test/" + t.Name()
+
+	// First lifecycle: Listen + Close immediately, no Dial in between.
+	lis1, err := Listen(ctx, name)
+	if err != nil {
+		t.Fatalf("first Listen: %v", err)
+	}
+	if err := lis1.Close(); err != nil {
+		t.Fatalf("first Close: %v", err)
+	}
+
+	// Now Dial: name is unbound; Dial must block.
+	type p struct {
+		c net.Conn
+		e error
+	}
+	ch := make(chan p, 1)
+	go func() {
+		c, e := Dial(ctx, name)
+		ch <- p{c, e}
+	}()
+	select {
+	case got := <-ch:
+		t.Fatalf("Dial returned without Listen: conn=%v err=%v", got.c, got.e)
+	case <-time.After(50 * time.Millisecond):
+		// expected: blocked
+	}
+
+	// Second Listen — pairs the pending Dial via Listen-drain.
+	lis2, err := Listen(ctx, name)
+	if err != nil {
+		t.Fatalf("second Listen: %v", err)
+	}
+	defer lis2.Close()
+	go func() {
+		c, _ := lis2.Accept()
+		if c != nil {
+			c.Close()
+		}
+	}()
+	select {
+	case got := <-ch:
+		if got.e != nil {
+			t.Fatalf("Dial err = %v", got.e)
+		}
+		got.c.Close()
+	case <-time.After(time.Second):
+		t.Fatalf("Dial did not pair with second Listen within 1s")
+	}
+}
+
+func TestQueuedConnsDeliveredAfterClose(t *testing.T) {
+	ctx := context.Background()
+	name := "test/" + t.Name()
+	lis, err := Listen(ctx, name)
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+
+	// Dial creates a pair, enqueues the accept side; Accept is not yet
+	// called. Then Close.
+	dc, err := Dial(ctx, name)
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer dc.Close()
+	if err := lis.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// First Accept should still deliver the queued conn.
+	ac, err := lis.Accept()
+	if err != nil {
+		t.Fatalf("Accept after Close (queue non-empty) err = %v, want conn", err)
+	}
+	ac.Close()
+
+	// Second Accept must return ErrClosed.
+	if _, err := lis.Accept(); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("Accept after queue drained err = %v, want net.ErrClosed", err)
+	}
+}
