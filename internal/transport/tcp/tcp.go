@@ -117,7 +117,7 @@ func splitHostPort(addr string) (host, port string, err error) {
 		if end < 0 || end+1 >= len(addr) || addr[end+1] != ':' {
 			return "", "", fmt.Errorf("%w: malformed IPv6 in %q", transport.ErrEndpointMalformed, addr)
 		}
-		return addr[:end+1], addr[end+2:], nil
+		return addr[1:end], addr[end+2:], nil
 	}
 	i := strings.LastIndex(addr, ":")
 	if i < 0 {
