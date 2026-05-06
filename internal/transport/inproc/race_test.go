@@ -13,21 +13,19 @@ func TestRaceDetectorClean(t *testing.T) {
 	const dialers = 4
 	ctx := context.Background()
 
-	for c := 0; c < cycles; c++ {
+	for c := range cycles {
 		name := "test/race/" + t.Name() + "/" + strconv.Itoa(c)
 		var wg sync.WaitGroup
 
 		dialChan := make(chan net.Conn, dialers)
-		for d := 0; d < dialers; d++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+		for range dialers {
+			wg.Go(func() {
 				dc, err := Dial(ctx, name)
 				if err != nil {
 					return
 				}
 				dialChan <- dc
-			}()
+			})
 		}
 
 		lis, err := Listen(ctx, name)
@@ -39,10 +37,8 @@ func TestRaceDetectorClean(t *testing.T) {
 		var accepted []net.Conn
 		var amu sync.Mutex
 		var awg sync.WaitGroup
-		for a := 0; a < dialers; a++ {
-			awg.Add(1)
-			go func() {
-				defer awg.Done()
+		for range dialers {
+			awg.Go(func() {
 				ac, err := lis.Accept()
 				if err != nil {
 					return
@@ -50,7 +46,7 @@ func TestRaceDetectorClean(t *testing.T) {
 				amu.Lock()
 				accepted = append(accepted, ac)
 				amu.Unlock()
-			}()
+			})
 		}
 
 		wg.Wait()

@@ -105,12 +105,9 @@ func TestCrossSchemeRoundTrip(t *testing.T) {
 			}
 			var wg sync.WaitGroup
 			for _, want := range payloads {
-				want := want
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
+				wg.Go(func() {
 					_, _ = dc.Write(want)
-				}()
+				})
 				buf := make([]byte, len(want))
 				if _, err := io.ReadFull(got.c, buf); err != nil {
 					t.Fatalf("ReadFull(%d): %v", len(want), err)

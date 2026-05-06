@@ -339,7 +339,7 @@ func TestQueuedConnsDeliveredAfterClose(t *testing.T) {
 // valid; what's invalid is goroutine/fd leak or panic.
 func TestCancelRacingDrain(t *testing.T) {
 	parent := context.Background()
-	for i := 0; i < 200; i++ {
+	for i := range 200 {
 		name := "test/race/" + t.Name() + "/" + strconv.Itoa(i)
 		ctx, cancel := context.WithCancel(parent)
 
