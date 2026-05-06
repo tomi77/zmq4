@@ -1,9 +1,9 @@
 # 00 — Meta-overview
 
-> **Status:** living document. F1, F2a, F2b, and F2c complete and
+> **Status:** living document. F1, F2a, F2b, F2c, and F3 complete and
 > tagged (`phase-1-wire-complete`, `phase-2a-null-complete`,
-> `phase-2b-plain-complete`, `phase-2c-curve-complete`). Later phases
-> pending.
+> `phase-2b-plain-complete`, `phase-2c-curve-complete`,
+> `phase-3-transport-complete`). Later phases pending.
 > **Author:** Tomasz Rup
 > **Date:** 2026-05-02 (last updated 2026-05-05)
 
@@ -109,7 +109,7 @@ deferred until all three concrete implementations exist (extracted in F2c).
 | F2a | `02a-security-null.md` | NULL handshake state machine. **No I/O.** | Unit + property + vector tests; vectors hand-crafted from RFC 37 §3 using F1's encoder. libzmq cross-validation deferred to F4 interop. | **Complete** — tagged `phase-2a-null-complete`. |
 | F2b | `02b-security-plain.md` | PLAIN handshake state machine. **No I/O.** Asymmetric: `ClientState` + `ServerState`; server uses an `Authenticator` callback (ZAP integration deferred to F6). Promotes `wire.ParseMetadata` / `wire.EncodeMetadata` to public L1 (additive). | Same shape as F2a. | **Complete** — tagged `phase-2b-plain-complete`. |
 | F2c | `02c-security-curve.md` | CURVE handshake state machine + post-handshake `Wrap`/`Unwrap` (MESSAGE encryption). **No I/O.** Extracts the shared `Mechanism` / `ClientMechanism` interfaces across F2a/F2b/F2c. Adds `nacl/box` + `nacl/secretbox` as the project's first non-stdlib dependency. | Same shape as F2a, plus crypto vectors under a deterministic seeded RNG. | **Complete** — tagged `phase-2c-curve-complete`. |
-| F3 | `03-transports.md` | `tcp`, `ipc`, `inproc` listener/dialer abstractions. | Self-loopback tests (our dialer ↔ our listener). | Pending. |
+| F3 | `03-transports.md` | `tcp`, `ipc`, `inproc` listener/dialer abstractions. | Self-loopback tests (our dialer ↔ our listener). | **Complete** — tagged `phase-3-transport-complete`. |
 | F4 | `04-connection-layer.md` | Wire-up of F1+F2+F3. Handshake, frame stream, error handling. | **First live interop with `libzmq`** (NULL handshake, then PLAIN, then CURVE). | Pending. |
 | F5a | `05a-sockets-reqrep.md` | `REQ`, `REP`, `ROUTER`, `DEALER`. | Interop with `libzmq` REQ/REP patterns. | Pending. |
 | F5b | `05b-sockets-pubsub.md` | `PUB`, `SUB`, `XPUB`, `XSUB`. Topic filtering. | Interop with `libzmq` pub/sub patterns. | Pending. |
