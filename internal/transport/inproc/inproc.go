@@ -92,3 +92,44 @@ func (l *inprocListener) Accept() (net.Conn, error) {
 		}
 	}
 }
+
+// Dial opens a connection to name. If name is already bound, returns
+// immediately with a fresh net.Pipe pair (the accept side is enqueued on
+// the listener). If unbound, blocks until either a Listen on the same
+// name pairs the dial, or ctx is cancelled.
+func Dial(ctx context.Context, name string) (net.Conn, error) {
+	if name == "" {
+		return nil, fmt.Errorf("%w: empty inproc name", transport.ErrEndpointMalformed)
+	}
+
+	registry.mu.Lock()
+	if lis, ok := registry.bound[name]; ok {
+		a, b := net.Pipe()
+		registry.mu.Unlock()
+		lis.enqueue(a)
+		return b, nil
+	}
+
+	pd := &pendingDial{ready: make(chan acceptResult, 1)}
+	registry.pending[name] = append(registry.pending[name], pd)
+	registry.mu.Unlock()
+
+	select {
+	case res := <-pd.ready:
+		return res.conn, nil
+	case <-ctx.Done():
+		registry.mu.Lock()
+		found := removeFromPending(name, pd)
+		registry.mu.Unlock()
+		if !found {
+			// Listen-drain already delivered. Drain pd.ready and close
+			// the orphaned dial-side conn so the listener observes EOF.
+			select {
+			case res := <-pd.ready:
+				_ = res.conn.Close()
+			default:
+			}
+		}
+		return nil, ctx.Err()
+	}
+}

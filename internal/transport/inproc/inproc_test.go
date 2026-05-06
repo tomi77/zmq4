@@ -1,8 +1,11 @@
 package inproc
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
+	"net"
 	"testing"
 
 	"github.com/tomi77/zmq4/internal/transport"
@@ -44,5 +47,48 @@ func TestListenAddr(t *testing.T) {
 	}
 	if a.String() != name {
 		t.Fatalf("Addr.String() = %q, want %q", a.String(), name)
+	}
+}
+
+func TestDialPostBindRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	name := "test/" + t.Name()
+	lis, err := Listen(ctx, name)
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+	defer lis.Close()
+
+	type p struct {
+		c net.Conn
+		e error
+	}
+	ch := make(chan p, 1)
+	go func() {
+		c, e := lis.Accept()
+		ch <- p{c, e}
+	}()
+
+	dc, err := Dial(ctx, name)
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer dc.Close()
+	got := <-ch
+	if got.e != nil {
+		t.Fatalf("Accept: %v", got.e)
+	}
+	defer got.c.Close()
+
+	want := []byte("hello over inproc")
+	go func() {
+		_, _ = dc.Write(want)
+	}()
+	buf := make([]byte, len(want))
+	if _, err := io.ReadFull(got.c, buf); err != nil {
+		t.Fatalf("ReadFull: %v", err)
+	}
+	if !bytes.Equal(buf, want) {
+		t.Fatalf("recv = %q, want %q", buf, want)
 	}
 }
