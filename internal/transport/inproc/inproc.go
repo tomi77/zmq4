@@ -30,14 +30,26 @@ func Listen(_ context.Context, name string) (net.Listener, error) {
 	registry.bound[name] = lis
 	drainSnap := registry.pending[name]
 	delete(registry.pending, name)
-	registry.mu.Unlock()
 
-	// Drain off-lock. FIFO order preserved by slice traversal.
+	// Pair every pending dialer with a fresh net.Pipe and deliver the
+	// dial-side conn via pd.ready BEFORE releasing registry.mu. The
+	// cap-1 buffered channel guarantees the send is non-blocking, and
+	// committing it under the lock closes the cancel-vs-drain race
+	// (spec §7.5): once a Dial cancellation reacquires registry.mu and
+	// finds pd absent from pending, pd.ready is guaranteed to hold the
+	// orphan conn for it to drain and close.
+	accepts := make([]net.Conn, 0, len(drainSnap))
 	for _, pd := range drainSnap {
 		a, b := net.Pipe()
+		pd.ready <- acceptResult{conn: b} // cap-1, non-blocking
+		accepts = append(accepts, a)
+	}
+	registry.mu.Unlock()
+
+	// Enqueue accept-sides off-lock (qmu acquired here; never co-held
+	// with registry.mu per §7.8). FIFO order preserved.
+	for _, a := range accepts {
 		lis.enqueue(a)
-		// cap-1 send — non-blocking by construction.
-		pd.ready <- acceptResult{conn: b}
 	}
 
 	return lis, nil
