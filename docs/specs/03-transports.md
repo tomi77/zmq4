@@ -1,6 +1,6 @@
 # 03 — Transports (Phase 3)
 
-> **Status:** pre-implementation, awaiting approval.
+> **Status:** implemented, frozen for F4+.
 > **Author:** Tomasz Rup
 > **Date:** 2026-05-05
 > **Layer:** L3 — `internal/transport`

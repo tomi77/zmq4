@@ -1,6 +1,6 @@
 # F3 Transports Implementation Plan
 
-> **For Claude:** REQUIRED: Use `superpowers:subagent-driven-development` to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking. Each task is one commit.
+> **For Claude:** REQUIRED: Use `superpowers:subagent-driven-development` to implement this plan. Steps use checkbox (`- [x]`) syntax for tracking. Each task is one commit.
 
 **Goal:** Implement `internal/transport` per `docs/specs/03-transports.md`: pure-Go listener and dialer abstractions for `tcp`, `ipc` (Unix domain sockets), and `inproc` (in-process pipes via `net.Pipe`). No I/O is performed at higher layers in this phase — only `net.Conn`-class transport plumbing.
 
@@ -32,7 +32,7 @@
 - Create: `internal/transport/endpoint.go`
 - Create: `internal/transport/endpoint_test.go`
 
-- [ ] **Step 1: Write `internal/transport/doc.go`**
+- [x] **Step 1: Write `internal/transport/doc.go`**
 
 ```go
 // Package transport implements the F3 transport layer for ZMTP.
@@ -55,7 +55,7 @@
 package transport
 ```
 
-- [ ] **Step 2: Write `internal/transport/errors.go`**
+- [x] **Step 2: Write `internal/transport/errors.go`**
 
 ```go
 package transport
@@ -77,7 +77,7 @@ var ErrSchemeUnknown = errors.New("transport: unknown scheme")
 var ErrInprocAlreadyBound = errors.New("transport: inproc name already bound")
 ```
 
-- [ ] **Step 3: Write `internal/transport/endpoint.go`**
+- [x] **Step 3: Write `internal/transport/endpoint.go`**
 
 ```go
 package transport
@@ -111,7 +111,7 @@ func ParseEndpoint(endpoint string) (scheme, addr string, err error) {
 }
 ```
 
-- [ ] **Step 4: Write `internal/transport/endpoint_test.go`**
+- [x] **Step 4: Write `internal/transport/endpoint_test.go`**
 
 ```go
 package transport
@@ -182,19 +182,19 @@ func TestParseEndpointInvalid(t *testing.T) {
 }
 ```
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 Run: `go test -race ./internal/transport/...`
 
 Expected: PASS (all `TestParseEndpoint*` subtests).
 
-- [ ] **Step 6: `go vet`**
+- [x] **Step 6: `go vet`**
 
 Run: `go vet ./internal/transport/...`
 
 Expected: no output.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add internal/transport/doc.go internal/transport/errors.go \
@@ -213,7 +213,7 @@ git commit -m "transport: package skeleton + endpoint parser"
 - Create: `internal/transport/tcp/tcp.go`
 - Create: `internal/transport/tcp/tcp_test.go`
 
-- [ ] **Step 1: Write `internal/transport/tcp/doc.go`**
+- [x] **Step 1: Write `internal/transport/tcp/doc.go`**
 
 ```go
 // Package tcp implements the tcp:// transport for F3.
@@ -230,7 +230,7 @@ git commit -m "transport: package skeleton + endpoint parser"
 package tcp
 ```
 
-- [ ] **Step 2: Write `internal/transport/tcp/tcp.go`**
+- [x] **Step 2: Write `internal/transport/tcp/tcp.go`**
 
 ```go
 package tcp
@@ -362,7 +362,7 @@ func splitHostPort(addr string) (host, port string, err error) {
 }
 ```
 
-- [ ] **Step 3: Write baseline test `internal/transport/tcp/tcp_test.go`**
+- [x] **Step 3: Write baseline test `internal/transport/tcp/tcp_test.go`**
 
 ```go
 package tcp
@@ -536,19 +536,19 @@ func TestReadDeadline(t *testing.T) {
 }
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `go test -race ./internal/transport/tcp/...`
 
 Expected: PASS (5 tests: round-trip, AlreadyBound, CloseUnblocksAccept, CloseUnblocksRead, ReadDeadline).
 
-- [ ] **Step 5: `go vet`**
+- [x] **Step 5: `go vet`**
 
 Run: `go vet ./internal/transport/tcp/...`
 
 Expected: no output.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add internal/transport/tcp/
@@ -562,7 +562,7 @@ git commit -m "transport/tcp: Listen + Dial baseline (round-trip, already-bound,
 **Files:**
 - Modify: `internal/transport/tcp/tcp_test.go` (append new tests)
 
-- [ ] **Step 1: Append `TestListenWildcardHost`**
+- [x] **Step 1: Append `TestListenWildcardHost`**
 
 ```go
 func TestListenWildcardHost(t *testing.T) {
@@ -585,7 +585,7 @@ func TestListenWildcardHost(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Append `TestListenWildcardPort`**
+- [x] **Step 2: Append `TestListenWildcardPort`**
 
 ```go
 func TestListenWildcardPort(t *testing.T) {
@@ -602,7 +602,7 @@ func TestListenWildcardPort(t *testing.T) {
 }
 ```
 
-- [ ] **Step 3: Append `TestListenIPv6Bracket` and `TestDialIPv6`**
+- [x] **Step 3: Append `TestListenIPv6Bracket` and `TestDialIPv6`**
 
 ```go
 func TestListenIPv6Bracket(t *testing.T) {
@@ -649,7 +649,7 @@ func TestDialIPv6(t *testing.T) {
 }
 ```
 
-- [ ] **Step 4: Append `TestDialMalformed`**
+- [x] **Step 4: Append `TestDialMalformed`**
 
 ```go
 func TestDialMalformed(t *testing.T) {
@@ -678,17 +678,17 @@ func TestDialMalformed(t *testing.T) {
 }
 ```
 
-- [ ] **Step 5: Update imports**
+- [x] **Step 5: Update imports**
 
 Test file should now import `"github.com/tomi77/zmq4/internal/transport"`.
 
-- [ ] **Step 6: Run tests**
+- [x] **Step 6: Run tests**
 
 Run: `go test -race ./internal/transport/tcp/...`
 
 Expected: PASS (TestDialMalformed has 8 subtests; IPv6 tests may skip on hosts without IPv6).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add internal/transport/tcp/tcp_test.go
@@ -703,7 +703,7 @@ git commit -m "transport/tcp: wildcard host/port, IPv6, malformed-addr coverage"
 - Create: `internal/transport/tcp/nodelay_linux_test.go`
 - Create: `internal/transport/tcp/nodelay_other_test.go`
 
-- [ ] **Step 1: Linux-tagged test asserting `TCP_NODELAY` flag**
+- [x] **Step 1: Linux-tagged test asserting `TCP_NODELAY` flag**
 
 `internal/transport/tcp/nodelay_linux_test.go`:
 
@@ -794,7 +794,7 @@ func TestNoDelaySetOnAccept(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Non-Linux placeholder**
+- [x] **Step 2: Non-Linux placeholder**
 
 `internal/transport/tcp/nodelay_other_test.go`:
 
@@ -813,13 +813,13 @@ func TestNoDelayPlatformSkip(t *testing.T) {
 }
 ```
 
-- [ ] **Step 3: Run tests**
+- [x] **Step 3: Run tests**
 
 Run: `go test -race ./internal/transport/tcp/...`
 
 Expected: PASS on Linux (2 NODELAY tests run); SKIP on non-Linux.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add internal/transport/tcp/nodelay_linux_test.go internal/transport/tcp/nodelay_other_test.go
@@ -837,7 +837,7 @@ git commit -m "transport/tcp: TCP_NODELAY syscall assertions (linux)"
 - Create: `internal/transport/ipc/ipc.go`
 - Create: `internal/transport/ipc/ipc_test.go`
 
-- [ ] **Step 1: Write `internal/transport/ipc/doc.go`**
+- [x] **Step 1: Write `internal/transport/ipc/doc.go`**
 
 ```go
 // Package ipc implements the ipc:// transport for F3 — Unix domain
@@ -853,7 +853,7 @@ git commit -m "transport/tcp: TCP_NODELAY syscall assertions (linux)"
 package ipc
 ```
 
-- [ ] **Step 2: Write `internal/transport/ipc/ipc.go` (Unix)**
+- [x] **Step 2: Write `internal/transport/ipc/ipc.go` (Unix)**
 
 ```go
 //go:build !windows
@@ -904,7 +904,7 @@ func Dial(ctx context.Context, path string) (*net.UnixConn, error) {
 }
 ```
 
-- [ ] **Step 3: Write `internal/transport/ipc/ipc_test.go` (Unix)**
+- [x] **Step 3: Write `internal/transport/ipc/ipc_test.go` (Unix)**
 
 ```go
 //go:build !windows
@@ -1023,13 +1023,13 @@ func TestDeadline(t *testing.T) {
 }
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `go test -race ./internal/transport/ipc/...`
 
 Expected: PASS on Unix.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add internal/transport/ipc/
@@ -1043,7 +1043,7 @@ git commit -m "transport/ipc: Listen + Dial round-trip (!windows)"
 **Files:**
 - Modify: `internal/transport/ipc/ipc_test.go` (append)
 
-- [ ] **Step 1: Append `TestUnlinkOnClose`**
+- [x] **Step 1: Append `TestUnlinkOnClose`**
 
 ```go
 func TestUnlinkOnClose(t *testing.T) {
@@ -1065,7 +1065,7 @@ func TestUnlinkOnClose(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Append `TestFileMode0600`**
+- [x] **Step 2: Append `TestFileMode0600`**
 
 ```go
 func TestFileMode0600(t *testing.T) {
@@ -1086,7 +1086,7 @@ func TestFileMode0600(t *testing.T) {
 }
 ```
 
-- [ ] **Step 3: Append `TestStaleSocketRebind`**
+- [x] **Step 3: Append `TestStaleSocketRebind`**
 
 Add `"strings"` to the imports of `ipc_test.go`, then append:
 
@@ -1115,7 +1115,7 @@ func TestStaleSocketRebind(t *testing.T) {
 }
 ```
 
-- [ ] **Step 4: Append `TestCloseUnblocksRead`**
+- [x] **Step 4: Append `TestCloseUnblocksRead`**
 
 ```go
 func TestCloseUnblocksRead(t *testing.T) {
@@ -1149,7 +1149,7 @@ func TestCloseUnblocksRead(t *testing.T) {
 }
 ```
 
-- [ ] **Step 5: Append `TestCloseUnblocksAccept`**
+- [x] **Step 5: Append `TestCloseUnblocksAccept`**
 
 ```go
 func TestCloseUnblocksAccept(t *testing.T) {
@@ -1177,13 +1177,13 @@ func TestCloseUnblocksAccept(t *testing.T) {
 }
 ```
 
-- [ ] **Step 6: Run tests**
+- [x] **Step 6: Run tests**
 
 Run: `go test -race ./internal/transport/ipc/...`
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add internal/transport/ipc/ipc_test.go
@@ -1198,7 +1198,7 @@ git commit -m "transport/ipc: unlink, mode 0600, stale-rebind, close-unblocks-{a
 - Create: `internal/transport/ipc/ipc_windows.go`
 - Create: `internal/transport/ipc/ipc_windows_test.go`
 
-- [ ] **Step 1: Write Windows stub**
+- [x] **Step 1: Write Windows stub**
 
 `internal/transport/ipc/ipc_windows.go`:
 
@@ -1227,7 +1227,7 @@ func Dial(_ context.Context, _ string) (*net.UnixConn, error) {
 }
 ```
 
-- [ ] **Step 2: Write Windows stub test**
+- [x] **Step 2: Write Windows stub test**
 
 `internal/transport/ipc/ipc_windows_test.go`:
 
@@ -1259,7 +1259,7 @@ func TestDialWindowsStub(t *testing.T) {
 }
 ```
 
-- [ ] **Step 3: Verify build on Linux + (optionally) Windows**
+- [x] **Step 3: Verify build on Linux + (optionally) Windows**
 
 Run: `GOOS=windows GOARCH=amd64 go build ./internal/transport/ipc/`
 
@@ -1269,7 +1269,7 @@ Run: `go test -race ./internal/transport/ipc/...`
 
 Expected: PASS on Linux (Windows tests excluded by build tag).
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add internal/transport/ipc/ipc_windows.go internal/transport/ipc/ipc_windows_test.go
@@ -1288,7 +1288,7 @@ git commit -m "transport/ipc: Windows stub returning ErrSchemeUnknown"
 - Create: `internal/transport/inproc/inproc.go`
 - Create: `internal/transport/inproc/inproc_test.go`
 
-- [ ] **Step 1: Write `inproc/doc.go`**
+- [x] **Step 1: Write `inproc/doc.go`**
 
 ```go
 // Package inproc implements the inproc:// transport for F3 — an
@@ -1307,7 +1307,7 @@ git commit -m "transport/ipc: Windows stub returning ErrSchemeUnknown"
 package inproc
 ```
 
-- [ ] **Step 2: Write `inproc/registry.go`**
+- [x] **Step 2: Write `inproc/registry.go`**
 
 ```go
 package inproc
@@ -1404,7 +1404,7 @@ func removeFromPending(name string, pd *pendingDial) bool {
 > intentional — splitting Listen and Dial across two commits keeps each
 > task's diff small and bisectable.
 
-- [ ] **Step 3: Write `inproc/inproc.go` (Listen only for this task)**
+- [x] **Step 3: Write `inproc/inproc.go` (Listen only for this task)**
 
 ```go
 package inproc
@@ -1503,7 +1503,7 @@ func (l *inprocListener) Accept() (net.Conn, error) {
 }
 ```
 
-- [ ] **Step 4: Write `inproc/inproc_test.go` (Listen-only tests for this task)**
+- [x] **Step 4: Write `inproc/inproc_test.go` (Listen-only tests for this task)**
 
 ```go
 package inproc
@@ -1556,13 +1556,13 @@ func TestListenAddr(t *testing.T) {
 }
 ```
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 Run: `go test -race ./internal/transport/inproc/...`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add internal/transport/inproc/
@@ -1577,7 +1577,7 @@ git commit -m "transport/inproc: registry + Listen + AlreadyBound"
 - Modify: `internal/transport/inproc/inproc.go` (add Dial)
 - Modify: `internal/transport/inproc/inproc_test.go` (append tests)
 
-- [ ] **Step 1: Append Dial to `inproc.go`**
+- [x] **Step 1: Append Dial to `inproc.go`**
 
 ```go
 // Dial opens a connection to name. If name is already bound, returns
@@ -1622,7 +1622,7 @@ func Dial(ctx context.Context, name string) (net.Conn, error) {
 }
 ```
 
-- [ ] **Step 2: Append `TestDialPostBindRoundTrip`**
+- [x] **Step 2: Append `TestDialPostBindRoundTrip`**
 
 ```go
 import (
@@ -1675,13 +1675,13 @@ func TestDialPostBindRoundTrip(t *testing.T) {
 }
 ```
 
-- [ ] **Step 3: Run tests**
+- [x] **Step 3: Run tests**
 
 Run: `go test -race ./internal/transport/inproc/...`
 
 Expected: PASS.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add internal/transport/inproc/inproc.go internal/transport/inproc/inproc_test.go
@@ -1695,7 +1695,7 @@ git commit -m "transport/inproc: Dial post-bind + round-trip"
 **Files:**
 - Modify: `internal/transport/inproc/inproc_test.go` (append)
 
-- [ ] **Step 1: Append `TestConnectBlocksUntilBind`**
+- [x] **Step 1: Append `TestConnectBlocksUntilBind`**
 
 ```go
 import "time"
@@ -1759,13 +1759,13 @@ func TestConnectBlocksUntilBind(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run tests**
+- [x] **Step 2: Run tests**
 
 Run: `go test -race -run TestConnectBlocksUntilBind ./internal/transport/inproc/...`
 
 Expected: PASS.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add internal/transport/inproc/inproc_test.go
@@ -1779,7 +1779,7 @@ git commit -m "transport/inproc: connect-blocks-until-bind"
 **Files:**
 - Modify: `internal/transport/inproc/inproc_test.go` (append)
 
-- [ ] **Step 1: Append `TestConnectCancelledByContext`**
+- [x] **Step 1: Append `TestConnectCancelledByContext`**
 
 ```go
 func TestConnectCancelledByContext(t *testing.T) {
@@ -1832,13 +1832,13 @@ func TestConnectCancelledManually(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run tests**
+- [x] **Step 2: Run tests**
 
 Run: `go test -race -run TestConnectCancelled ./internal/transport/inproc/...`
 
 Expected: PASS.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add internal/transport/inproc/inproc_test.go
@@ -1852,7 +1852,7 @@ git commit -m "transport/inproc: Dial cancellation by context"
 **Files:**
 - Modify: `internal/transport/inproc/inproc_test.go` (append)
 
-- [ ] **Step 1: Append `TestCloseUnblocksAccept`**
+- [x] **Step 1: Append `TestCloseUnblocksAccept`**
 
 ```go
 func TestCloseUnblocksAccept(t *testing.T) {
@@ -1884,7 +1884,7 @@ func TestCloseUnblocksAccept(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Append `TestBindRebindAfterClose`**
+- [x] **Step 2: Append `TestBindRebindAfterClose`**
 
 ```go
 func TestBindRebindAfterClose(t *testing.T) {
@@ -1906,7 +1906,7 @@ func TestBindRebindAfterClose(t *testing.T) {
 }
 ```
 
-- [ ] **Step 3: Append `TestPendingDialBetweenCloseAndRebind`**
+- [x] **Step 3: Append `TestPendingDialBetweenCloseAndRebind`**
 
 This is the spec §7.2 invariant test: after a `Listener.Close()`, the name
 is released — a subsequent `Dial` on the same name blocks (no tombstone)
@@ -1967,7 +1967,7 @@ func TestPendingDialBetweenCloseAndRebind(t *testing.T) {
 }
 ```
 
-- [ ] **Step 4: Append `TestQueuedConnsDeliveredAfterClose`** — verifies that conns enqueued before Close still get delivered:
+- [x] **Step 4: Append `TestQueuedConnsDeliveredAfterClose`** — verifies that conns enqueued before Close still get delivered:
 
 ```go
 func TestQueuedConnsDeliveredAfterClose(t *testing.T) {
@@ -2003,13 +2003,13 @@ func TestQueuedConnsDeliveredAfterClose(t *testing.T) {
 }
 ```
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 Run: `go test -race ./internal/transport/inproc/...`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add internal/transport/inproc/inproc_test.go
@@ -2023,7 +2023,7 @@ git commit -m "transport/inproc: Listener.Close + Accept lifecycle + rebind"
 **Files:**
 - Modify: `internal/transport/inproc/inproc_test.go` (append)
 
-- [ ] **Step 1: Append `TestCancelRacingDrain` — exercises the §7.5 race**
+- [x] **Step 1: Append `TestCancelRacingDrain` — exercises the §7.5 race**
 
 ```go
 // TestCancelRacingDrain stresses the case where ctx fires concurrently
@@ -2079,13 +2079,13 @@ func TestCancelRacingDrain(t *testing.T) {
 
 > Add `"strconv"` to the imports of `inproc_test.go`.
 
-- [ ] **Step 2: Run tests**
+- [x] **Step 2: Run tests**
 
 Run: `go test -race -count=2 -run TestCancelRacingDrain ./internal/transport/inproc/...`
 
 Expected: PASS, no race reports across 2×200=400 iterations.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add internal/transport/inproc/inproc_test.go
@@ -2099,7 +2099,7 @@ git commit -m "transport/inproc: cancel-vs-drain race resolution"
 **Files:**
 - Create: `internal/transport/inproc/race_test.go`
 
-- [ ] **Step 1: Write race stress test**
+- [x] **Step 1: Write race stress test**
 
 ```go
 package inproc
@@ -2173,13 +2173,13 @@ func TestRaceDetectorClean(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run with `-race`**
+- [x] **Step 2: Run with `-race`**
 
 Run: `go test -race -count=1 -run TestRaceDetectorClean ./internal/transport/inproc/...`
 
 Expected: PASS, no race reports.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add internal/transport/inproc/race_test.go
@@ -2193,7 +2193,7 @@ git commit -m "transport/inproc: 100-cycle race stress"
 **Files:**
 - Modify: `internal/transport/inproc/inproc_test.go` (append)
 
-- [ ] **Step 1: Append `TestDeadline`**
+- [x] **Step 1: Append `TestDeadline`**
 
 ```go
 func TestDeadline(t *testing.T) {
@@ -2229,7 +2229,7 @@ func TestDeadline(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Append `TestPeerCloseEOF`**
+- [x] **Step 2: Append `TestPeerCloseEOF`**
 
 ```go
 func TestPeerCloseEOF(t *testing.T) {
@@ -2263,13 +2263,13 @@ func TestPeerCloseEOF(t *testing.T) {
 }
 ```
 
-- [ ] **Step 3: Run tests**
+- [x] **Step 3: Run tests**
 
 Run: `go test -race ./internal/transport/inproc/...`
 
 Expected: PASS.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add internal/transport/inproc/inproc_test.go
@@ -2285,7 +2285,7 @@ git commit -m "transport/inproc: deadline and peer-close EOF semantics"
 **Files:**
 - Create: `internal/transport/transport.go`
 
-- [ ] **Step 1: Write `transport.go`**
+- [x] **Step 1: Write `transport.go`**
 
 ```go
 package transport
@@ -2340,19 +2340,19 @@ func Dial(ctx context.Context, endpoint string) (net.Conn, error) {
 }
 ```
 
-- [ ] **Step 2: Run build**
+- [x] **Step 2: Run build**
 
 Run: `go build ./internal/transport/...`
 
 Expected: builds without errors.
 
-- [ ] **Step 3: Run all transport tests**
+- [x] **Step 3: Run all transport tests**
 
 Run: `go test -race ./internal/transport/...`
 
 Expected: PASS (everything from Tasks 1–15 plus existing).
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add internal/transport/transport.go
@@ -2366,7 +2366,7 @@ git commit -m "transport: facade Listen/Dial dispatcher"
 **Files:**
 - Create: `internal/transport/transport_test.go`
 
-- [ ] **Step 1: Write cross-scheme table-driven tests**
+- [x] **Step 1: Write cross-scheme table-driven tests**
 
 ```go
 package transport_test
@@ -2551,7 +2551,7 @@ func TestCrossSchemePeerCloseEOF(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Append `TestCrossSchemeDialAfterClose` (per-scheme)**
+- [x] **Step 2: Append `TestCrossSchemeDialAfterClose` (per-scheme)**
 
 Spec §8.5 requires per-scheme assertions for Dial after listener Close.
 Each scheme has its own observable: tcp returns ECONNREFUSED-class, ipc
@@ -2603,13 +2603,13 @@ func TestCrossSchemeDialAfterClose(t *testing.T) {
 }
 ```
 
-- [ ] **Step 3: Run cross-scheme tests**
+- [x] **Step 3: Run cross-scheme tests**
 
 Run: `go test -race ./internal/transport/...`
 
 Expected: PASS for all three scheme subtests on Linux/macOS; ipc subtests SKIP on Windows.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add internal/transport/transport_test.go
@@ -2627,38 +2627,38 @@ git commit -m "transport: cross-scheme conformance table"
 - Modify: `docs/specs/00-meta-overview.md` (F3 row + status banner)
 - Modify: `docs/plans/03-transports-implementation.md` (mark all checkboxes)
 
-- [ ] **Step 1: `go vet`**
+- [x] **Step 1: `go vet`**
 
 Run: `go vet ./...`
 
 Expected: no output.
 
-- [ ] **Step 2: `staticcheck`**
+- [x] **Step 2: `staticcheck`**
 
 Run: `staticcheck ./...`
 
 Expected: no output. (Install if missing: `go install honnef.co/go/tools/cmd/staticcheck@latest`.)
 
-- [ ] **Step 3: `-race` full project**
+- [x] **Step 3: `-race` full project**
 
 Run: `go test -race -count=1 ./...`
 
 Expected: PASS. No race reports.
 
-- [ ] **Step 4: Cross-compile Windows**
+- [x] **Step 4: Cross-compile Windows**
 
 Run: `GOOS=windows GOARCH=amd64 go build ./...`
 
 Expected: builds.
 
-- [ ] **Step 5: `modernize -fix`** (memory feedback: only at phase end)
+- [x] **Step 5: `modernize -fix`** (memory feedback: only at phase end)
 
 Use the same `modernize` invocation the project used at the previous
 phase tag (`phase-2c-curve-complete`). Inspect `git log -p phase-2c-curve-complete~..phase-2c-curve-complete -- '**/*.go'` for the canonical command and target paths if uncertain.
 
 Expected: no diff.
 
-- [ ] **Step 6: Flip spec status**
+- [x] **Step 6: Flip spec status**
 
 Edit `docs/specs/03-transports.md` header from:
 
@@ -2672,28 +2672,28 @@ to:
 > **Status:** implemented, frozen for F4+.
 ```
 
-- [ ] **Step 7: Update `docs/specs/00-meta-overview.md`**
+- [x] **Step 7: Update `docs/specs/00-meta-overview.md`**
 
 In the status banner at the top, add `phase-3-transport-complete` to the list of tagged phases. In the §4 phase table, change the F3 row's Status column from `Pending.` to `**Complete** — tagged \`phase-3-transport-complete\`.`.
 
-- [ ] **Step 8: Mark plan checkboxes**
+- [x] **Step 8: Mark plan checkboxes**
 
-In `docs/plans/03-transports-implementation.md`, replace all `- [ ]` with `- [x]` for tasks 1–17 (Task 18 is in progress).
+In `docs/plans/03-transports-implementation.md`, replace all `- [x]` with `- [x]` for tasks 1–17 (Task 18 is in progress).
 
-- [ ] **Step 9: Commit doc updates**
+- [x] **Step 9: Commit doc updates**
 
 ```bash
 git add docs/specs/03-transports.md docs/specs/00-meta-overview.md docs/plans/03-transports-implementation.md
 git commit -m "transport: mark Phase 3 (transport layer) complete"
 ```
 
-- [ ] **Step 10: Tag**
+- [x] **Step 10: Tag**
 
 ```bash
 git tag phase-3-transport-complete
 ```
 
-- [ ] **Step 11: Final verification**
+- [x] **Step 11: Final verification**
 
 Run: `git tag --sort=-creatordate | head`
 
@@ -2703,9 +2703,9 @@ Run: `go test -race -count=1 ./...`
 
 Expected: PASS.
 
-- [ ] **Step 12: Mark Task 18 done**
+- [x] **Step 12: Mark Task 18 done**
 
-In the plan, replace this task's last open `- [ ]` with `- [x]` and add a final commit:
+In the plan, replace this task's last open `- [x]` with `- [x]` and add a final commit:
 
 ```bash
 git add docs/plans/03-transports-implementation.md
