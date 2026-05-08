@@ -21,11 +21,13 @@ var compatiblePeers = map[string]map[string]bool{
 // socketBase holds shared goroutine and lifecycle machinery for all socket
 // types. Concrete types embed socketBase.
 type socketBase struct {
-	cfg       *socketConfig
-	pipes     *pipeSet
-	closeCh   chan struct{}
-	closeOnce sync.Once
-	wg        sync.WaitGroup // tracks acceptor + handshake goroutines
+	cfg         *socketConfig
+	pipes       *pipeSet
+	closeCh     chan struct{}
+	closeOnce   sync.Once
+	wg          sync.WaitGroup // tracks acceptor + handshake goroutines
+	listeners   []net.Listener
+	listenersMu sync.Mutex
 }
 
 func newSocketBase(cfg *socketConfig) socketBase {
@@ -43,6 +45,9 @@ func (sb *socketBase) bind(ctx context.Context, endpoint, socketType string) err
 	if err != nil {
 		return err
 	}
+	sb.listenersMu.Lock()
+	sb.listeners = append(sb.listeners, ln)
+	sb.listenersMu.Unlock()
 	sb.wg.Add(1)
 	go sb.acceptLoop(ln, socketType)
 	return nil
@@ -73,7 +78,7 @@ func (sb *socketBase) doServerHandshake(raw net.Conn, socketType string) {
 	}
 	c, err := conn.ServerHandshake(hsCtx, raw, mech)
 	if err != nil {
-		return
+		return // raw already closed by F4 on handshake failure
 	}
 	if err := sb.addConn(c, socketType); err != nil {
 		c.Close()
@@ -131,10 +136,20 @@ func (sb *socketBase) addConn(c *conn.Conn, localSocketType string) error {
 func (sb *socketBase) close() {
 	sb.closeOnce.Do(func() {
 		close(sb.closeCh)
+		sb.listenersMu.Lock()
+		for _, ln := range sb.listeners {
+			ln.Close()
+		}
+		sb.listenersMu.Unlock()
 		for _, p := range sb.pipes.all() {
 			p.conn.Close()
 		}
 		sb.wg.Wait()
+		// Close any pipes that were added after the first snapshot.
+		for _, p := range sb.pipes.all() {
+			p.conn.Close()
+		}
+		// Now wait for all reader goroutines to exit.
 		for _, p := range sb.pipes.all() {
 			p.wg.Wait()
 		}
@@ -170,6 +185,8 @@ func (sb *socketBase) recvAny(ctx context.Context) (Message, *pipe, error) {
 // recvFromPipes fair-queues across a snapshot of pipes using reflect.Select.
 func recvFromPipes(ctx context.Context, pipes []*pipe, closeCh <-chan struct{}) (Message, *pipe, error) {
 	cases := make([]reflect.SelectCase, 2+len(pipes))
+	// ctx.Done() returns nil for context.Background(); a nil channel in
+	// reflect.Select blocks forever, which is the correct behavior.
 	cases[0] = reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ctx.Done())}
 	cases[1] = reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(closeCh)}
 	for i, p := range pipes {
@@ -193,6 +210,8 @@ func recvFromPipes(ctx context.Context, pipes []*pipe, closeCh <-chan struct{}) 
 // sendWaitPipe waits until a pipe is available for sending, then returns it.
 func (sb *socketBase) sendWaitPipe(ctx context.Context) (*pipe, error) {
 	for {
+		// Read the notification channel before next() so any concurrent add()
+		// between here and next() closes the channel we wait on — no missed wakeup.
 		added := sb.pipes.currentAdded()
 		p := sb.pipes.next()
 		if p != nil {
