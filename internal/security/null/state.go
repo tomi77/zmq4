@@ -107,3 +107,6 @@ func (s *State) Unwrap(f wire.Frame) (wire.Frame, error) {
 	}
 	return f, nil
 }
+
+// Name returns "NULL". See security.Mechanism.Name.
+func (s *State) Name() string { return "NULL" }

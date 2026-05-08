@@ -499,5 +499,22 @@ func TestServerWrapUnwrapRoundTrip(t *testing.T) {
 	}
 }
 
+func TestServerStateName(t *testing.T) {
+	serverPub, serverSec, err := GenerateKeyPair(nil)
+	if err != nil {
+		t.Fatalf("server keypair: %v", err)
+	}
+	s, err := NewServer(ServerOptions{
+		OurPublicKey: serverPub, OurSecretKey: &serverSec,
+		Authorizer: func(_ PublicKey, _ wire.Metadata) error { return nil },
+	})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	if got := s.Name(); got != "CURVE" {
+		t.Fatalf("Name() = %q, want %q", got, "CURVE")
+	}
+}
+
 // silence unused-import warning for crypto/rand (used by future tasks).
 var _ = rand.Reader

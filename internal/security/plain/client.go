@@ -151,3 +151,6 @@ func (c *ClientState) Unwrap(f wire.Frame) (wire.Frame, error) {
 	}
 	return f, nil
 }
+
+// Name returns "PLAIN". See security.Mechanism.Name.
+func (c *ClientState) Name() string { return "PLAIN" }

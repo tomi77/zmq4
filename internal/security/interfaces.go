@@ -63,6 +63,13 @@ type Mechanism interface {
 	// by the Mechanism and remains valid until the Mechanism is
 	// discarded; callers MUST NOT mutate it.
 	PeerMetadata() wire.Metadata
+
+	// Name returns the wire mechanism name advertised in the ZMTP
+	// greeting — one of "NULL", "PLAIN", "CURVE". Stable for the
+	// lifetime of the Mechanism. Used by F4 (connection layer) to
+	// populate the greeting's mechanism field and to validate the
+	// peer-advertised mechanism matches.
+	Name() string
 }
 
 // ClientMechanism is a Mechanism with an active-side initialization

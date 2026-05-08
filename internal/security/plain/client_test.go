@@ -384,6 +384,16 @@ func TestPlainClientUnwrapPassthrough(t *testing.T) {
 	}
 }
 
+func TestClientStateName(t *testing.T) {
+	c, err := NewClient([]byte("u"), []byte("p"), nil)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	if got := c.Name(); got != "PLAIN" {
+		t.Fatalf("Name() = %q, want %q", got, "PLAIN")
+	}
+}
+
 func newPlainClientDone(t *testing.T) *ClientState {
 	t.Helper()
 	c, err := NewClient([]byte("u"), []byte("p"), nil)

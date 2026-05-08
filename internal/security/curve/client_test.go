@@ -639,3 +639,23 @@ func TestClientPeerPublicKeyReturnsServerKeyFromOptions(t *testing.T) {
 		t.Fatalf("PeerPublicKey = %x, want %x", got, serverLongPub)
 	}
 }
+
+func TestClientStateName(t *testing.T) {
+	clientPub, clientSec, err := GenerateKeyPair(nil)
+	if err != nil {
+		t.Fatalf("client keypair: %v", err)
+	}
+	serverPub, _, err := GenerateKeyPair(nil)
+	if err != nil {
+		t.Fatalf("server keypair: %v", err)
+	}
+	c, err := NewClient(ClientOptions{
+		ServerKey: serverPub, OurPublicKey: clientPub, OurSecretKey: &clientSec,
+	})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	if got := c.Name(); got != "CURVE" {
+		t.Fatalf("Name() = %q, want %q", got, "CURVE")
+	}
+}

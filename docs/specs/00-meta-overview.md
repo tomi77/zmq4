@@ -1,11 +1,11 @@
 # 00 — Meta-overview
 
-> **Status:** living document. F1, F2a, F2b, F2c, and F3 complete and
+> **Status:** living document. F1, F2a, F2b, F2c, F3, and F4 complete and
 > tagged (`phase-1-wire-complete`, `phase-2a-null-complete`,
 > `phase-2b-plain-complete`, `phase-2c-curve-complete`,
-> `phase-3-transport-complete`). Later phases pending.
+> `phase-3-transport-complete`, `phase-4-conn-complete`). Later phases pending.
 > **Author:** Tomasz Rup
-> **Date:** 2026-05-02 (last updated 2026-05-05)
+> **Date:** 2026-05-02 (last updated 2026-05-08)
 
 This document defines the overall plan for `github.com/tomi77/zmq4`: a pure-Go
 implementation of [ZeroMQ](https://zeromq.org/) that speaks
@@ -110,7 +110,7 @@ deferred until all three concrete implementations exist (extracted in F2c).
 | F2b | `02b-security-plain.md` | PLAIN handshake state machine. **No I/O.** Asymmetric: `ClientState` + `ServerState`; server uses an `Authenticator` callback (ZAP integration deferred to F6). Promotes `wire.ParseMetadata` / `wire.EncodeMetadata` to public L1 (additive). | Same shape as F2a. | **Complete** — tagged `phase-2b-plain-complete`. |
 | F2c | `02c-security-curve.md` | CURVE handshake state machine + post-handshake `Wrap`/`Unwrap` (MESSAGE encryption). **No I/O.** Extracts the shared `Mechanism` / `ClientMechanism` interfaces across F2a/F2b/F2c. Adds `nacl/box` + `nacl/secretbox` as the project's first non-stdlib dependency. | Same shape as F2a, plus crypto vectors under a deterministic seeded RNG. | **Complete** — tagged `phase-2c-curve-complete`. |
 | F3 | `03-transports.md` | `tcp`, `ipc`, `inproc` listener/dialer abstractions. | Self-loopback tests (our dialer ↔ our listener). | **Complete** — tagged `phase-3-transport-complete`. |
-| F4 | `04-connection-layer.md` | Wire-up of F1+F2+F3. Handshake, frame stream, error handling. | **First live interop with `libzmq`** (NULL handshake, then PLAIN, then CURVE). | Pending. |
+| F4 | `04-connection-layer.md` | Wire-up of F1+F2+F3. Handshake, frame stream, error handling. | **First live interop with `libzmq`** (NULL handshake, then PLAIN, then CURVE). | **Complete** — tagged `phase-4-conn-complete`. ZMTP-version-downgrade interop deferred (pyzmq cannot force ZMTP 3.0); covered by unit test on net.Pipe. |
 | F5a | `05a-sockets-reqrep.md` | `REQ`, `REP`, `ROUTER`, `DEALER`. | Interop with `libzmq` REQ/REP patterns. | Pending. |
 | F5b | `05b-sockets-pubsub.md` | `PUB`, `SUB`, `XPUB`, `XSUB`. Topic filtering. | Interop with `libzmq` pub/sub patterns. | Pending. |
 | F5c | `05c-sockets-pipeline-pair.md` | `PUSH`, `PULL`, `PAIR`. | Interop with `libzmq` pipeline/pair. | Pending. |
@@ -131,6 +131,14 @@ so the original phase boundary stays intact.
   semantics: `nil` body/data preserved as `nil`. Spec updated in
   `01-zmtp-wire-protocol.md` §Frames, §Commands, §7 (buffer ownership),
   §9.1 (test plan).
+- `MessageCommandName = "MESSAGE"` constant added (commit `17978e5`,
+  2026-05-08) — symmetric with `ReadyCommandName`/`ErrorCommandName`/
+  etc. F2c switched from a private constant to this public one in the
+  same chunk.
+- `ReadGreetingPhaseA(io.Reader) error` helper added (commit `c2a0e23`,
+  2026-05-08). F4 needs lockstep validation of the signature +
+  version-major before reading the rest of the greeting.
+  `ReadGreeting` was refactored to call it.
 
 ### F2a / F2b amendments — Wrap/Unwrap added by F2c
 
@@ -146,6 +154,19 @@ changes; the frozen tags `phase-2a-null-complete` and
   pass-through (return the input frame unchanged, aliasing its body)
   once the handshake is done; all three return `security.ErrNotDone`
   if called earlier. Spec lives in `02c-security-curve.md` §2.1 / §4.1.
+
+### F2a / F2b / F2c amendments — `Name() string` added by F4
+
+Additive change landed during F4 work; the frozen tags remain valid.
+
+- `(*null.State).Name()` returns `"NULL"`.
+- `(*plain.{Client,Server}State).Name()` both return `"PLAIN"`.
+- `(*curve.{Client,Server}State).Name()` both return `"CURVE"`.
+- `internal/security/curve/codec.go` switched from a private
+  `messageCommandName` to the public `wire.MessageCommandName`.
+
+The `Mechanism` interface gained `Name() string` to support F4's
+greeting-population needs.
 
 ## 5. Workflow per phase
 

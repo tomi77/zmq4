@@ -112,6 +112,9 @@ func NewServer(opts ServerOptions) (*ServerState, error) {
 // Done reports whether the handshake completed successfully.
 func (s *ServerState) Done() bool { return s.done && !s.failed && !s.closed }
 
+// Name returns "CURVE". See security.Mechanism.Name.
+func (s *ServerState) Name() string { return "CURVE" }
+
 // Receive consumes one peer command and advances the state machine.
 // Server has no Start — it is purely reactive (HELLO arrives first).
 func (s *ServerState) Receive(cmd wire.Command) (out *wire.Command, done bool, err error) {

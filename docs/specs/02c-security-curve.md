@@ -1319,6 +1319,21 @@ Resolved during draft review:
   path. Authorizers that may block long are responsible for their own
   timeout. Documented in `Authorizer`'s contract (§4.4).
 
+## 9. F4 amendments
+
+Additive changes landed after `phase-2c-curve-complete` was tagged.
+Frozen tag remains valid (additive on frozen surface).
+
+- `(*ClientState).Name() string` and `(*ServerState).Name() string`
+  both return `"CURVE"`. Required by the extended `security.Mechanism`
+  interface (F4 connection layer).
+
+- `internal/security/curve/codec.go` no longer defines a private
+  `messageCommandName` constant; it now references the public
+  `wire.MessageCommandName`. No behavioural change — same string, same
+  encoded bytes. The wire layer is the canonical home for ZMTP
+  command-name constants.
+
 ## 10. References
 
 - [RFC 37/ZMTP 3.1](https://rfc.zeromq.org/spec/37/) §3 (Security
