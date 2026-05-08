@@ -51,6 +51,10 @@ type Spec struct {
 	Mechanism Mechanism
 	Scenario  Scenario
 
+	// SocketType selects the libzmq socket type: "PAIR" (default),
+	// "REQ", "REP", "DEALER", or "ROUTER". Empty string means "PAIR".
+	SocketType string
+
 	// IPCBindMountHost: when scheme is ipc, the path on the host that
 	// must be bind-mounted into the container at the same location so
 	// the UDS is visible to both sides. Ignored for tcp.
@@ -105,12 +109,13 @@ func Start(t *testing.T, spec Spec) *Peer {
 	}
 
 	cfg := map[string]any{
-		"role":      string(spec.Role),
-		"endpoint":  spec.Endpoint,
-		"mechanism": string(spec.Mechanism),
-		"scenario":  string(spec.Scenario),
-		"plain":     spec.PLAIN,
-		"curve":     spec.CURVE,
+		"role":        string(spec.Role),
+		"endpoint":    spec.Endpoint,
+		"mechanism":   string(spec.Mechanism),
+		"scenario":    string(spec.Scenario),
+		"socket_type": spec.SocketType,
+		"plain":       spec.PLAIN,
+		"curve":       spec.CURVE,
 	}
 	cfgJSON, err := json.Marshal(cfg)
 	if err != nil {

@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""F4 libzmq interop bridge.
+"""F4/F5a libzmq interop bridge.
 
 Reads one line of JSON from stdin describing the desired role,
-endpoint, mechanism, and scenario; opens a libzmq PAIR socket; runs
-the scenario; exits 0 on success.
+endpoint, mechanism, socket_type, and scenario; opens a libzmq socket;
+runs the scenario; exits 0 on success.
 
 JSON config schema:
     {
-        "role":      "dialer" | "listener",
-        "endpoint":  "tcp://127.0.0.1:5555" | "ipc:///tmp/zmq.sock",
-        "mechanism": "NULL" | "PLAIN" | "CURVE",
-        "scenario":  "handshake" | "single" | "multipart",
+        "role":        "dialer" | "listener",
+        "endpoint":    "tcp://127.0.0.1:5555" | "ipc:///tmp/zmq.sock",
+        "mechanism":   "NULL" | "PLAIN" | "CURVE",
+        "socket_type": "PAIR" | "REQ" | "REP" | "DEALER" | "ROUTER",
+        "scenario":    "handshake" | "single" | "multipart",
         "plain":     {"user": "...", "pass": "..."}            # PLAIN only
         "curve":     {"server_key": "<z85>",                   # CURVE only
                       "secret_key": "<z85>",
@@ -28,6 +29,15 @@ Output (newline-delimited):
 import json
 import sys
 import zmq
+
+
+SOCKET_TYPES = {
+    "PAIR":   zmq.PAIR,
+    "REQ":    zmq.REQ,
+    "REP":    zmq.REP,
+    "DEALER": zmq.DEALER,
+    "ROUTER": zmq.ROUTER,
+}
 
 
 def configure_security(sock: zmq.Socket, mechanism: str, params: dict) -> None:
@@ -53,20 +63,39 @@ def configure_security(sock: zmq.Socket, mechanism: str, params: dict) -> None:
     raise ValueError(f"unknown mechanism {mechanism!r}")
 
 
-def run_scenario(sock: zmq.Socket, scenario: str) -> None:
+def run_scenario(sock: zmq.Socket, scenario: str, socket_type: str) -> None:
     if scenario == "handshake":
-        # Just having a usable socket means the handshake completed.
+        # A usable socket means the handshake completed.
         return
+
+    if socket_type in ("REQ", "DEALER"):
+        # Active sockets: initiate by sending first, then recv the echo.
+        if scenario == "single":
+            sock.send(b"INTEROP")
+            sock.recv()
+        elif scenario == "multipart":
+            sock.send_multipart([b"INTEROP_P1", b"INTEROP_P2"])
+            sock.recv_multipart()
+        else:
+            raise ValueError(f"unknown scenario {scenario!r}")
+        return
+
+    if socket_type == "ROUTER":
+        # ROUTER always uses multipart (libzmq prepends identity frame).
+        # recv_multipart gives [identity, ...frames]; send_multipart echoes back.
+        frames = sock.recv_multipart()
+        sock.send_multipart(frames)
+        return
+
+    # PAIR, REP: passive echo.
     if scenario == "single":
-        # Echo: receive then send back.
         msg = sock.recv()
         sock.send(msg)
-        return
-    if scenario == "multipart":
+    elif scenario == "multipart":
         msgs = sock.recv_multipart()
         sock.send_multipart(msgs)
-        return
-    raise ValueError(f"unknown scenario {scenario!r}")
+    else:
+        raise ValueError(f"unknown scenario {scenario!r}")
 
 
 def main() -> int:
@@ -74,7 +103,9 @@ def main() -> int:
     cfg = json.loads(raw)
 
     ctx = zmq.Context.instance()
-    sock = ctx.socket(zmq.PAIR)
+    socket_type_name = (cfg.get("socket_type") or "PAIR").upper()
+    zmq_type = SOCKET_TYPES.get(socket_type_name, zmq.PAIR)
+    sock = ctx.socket(zmq_type)
     sock.setsockopt(zmq.LINGER, 1000)
 
     try:
@@ -94,7 +125,7 @@ def main() -> int:
             sock.connect(cfg["endpoint"])
             print(f"READY {cfg['endpoint']}", flush=True)
 
-        run_scenario(sock, cfg["scenario"])
+        run_scenario(sock, cfg["scenario"], socket_type_name)
         print("OK", flush=True)
         return 0
     except Exception as exc:
