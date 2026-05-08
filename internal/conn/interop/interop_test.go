@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -368,4 +369,49 @@ func allocOurListenEndpoint(t *testing.T, scheme string) (endpoint, sharedDir st
 	}
 	t.Fatalf("unknown scheme %q", scheme)
 	return "", ""
+}
+
+func TestInteropMechanismMismatch(t *testing.T) {
+	fixture.EnsureDockerImage(t)
+
+	// libzmq runs PLAIN; we run NULL — both sides must close the conn
+	// cleanly. (RFC 23 §3.3.)
+	libzmqEndpoint := "tcp://127.0.0.1:0"
+	spec := fixture.Spec{
+		Role:      fixture.RoleListener,
+		Endpoint:  libzmqEndpoint,
+		Mechanism: fixture.MechPLAIN,
+		Scenario:  fixture.ScenarioHandshake,
+		PLAIN:     fixture.PlainParams{User: "user", Pass: "pass"},
+	}
+	peer := fixture.Start(t, spec)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	raw, err := transport.Dial(ctx, peer.ResolvedEndpoint)
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer raw.Close()
+	_, err = conn.ClientHandshake(ctx, raw, null.New(pairMetadata()))
+	if err == nil {
+		t.Fatalf("expected ErrMechanismMismatch, got nil")
+	}
+	if !strings.Contains(err.Error(), "mechanism mismatch") {
+		t.Errorf("err = %v, want wrap of ErrMechanismMismatch", err)
+	}
+}
+
+func TestInteropUnsupportedVersion(t *testing.T) {
+	// Note: pyzmq does not expose a knob to force ZMTP 3.0. To test the
+	// version-mismatch path, this test would need either a custom
+	// libzmq build with version forced to 3.0, or a hand-rolled wire
+	// peer that emits major=0x02 in the greeting.
+	//
+	// For F4 phase tag, this negative test is implemented as a unit
+	// test on net.Pipe (already present at handshake_test.go
+	// TestGreetingVersionDowngradeAbortsBeforeRest). The interop
+	// counterpart is documented as an Open Item — see spec §8 and the
+	// commit message.
+	t.Skip("ZMTP version downgrade interop deferred — pyzmq cannot force ZMTP 3.0; covered by unit test on net.Pipe.")
 }
