@@ -8,7 +8,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/tomi77/zmq4/internal/security"
 	"github.com/tomi77/zmq4/internal/security/null"
@@ -208,6 +207,124 @@ func TestPostHandshakeReadFrameMalformedCommand(t *testing.T) {
 	}
 }
 
-// Ensure the new imports are used (compile guard for sync and time).
-var _ sync.Mutex
-var _ = time.Second
+func TestPostHandshakeWriteFrameNULL(t *testing.T) {
+	// Round-trip via NULL: WriteFrame(client) → ReadFrame(server) verbatim.
+	c, s, cErr, sErr := runHandshakePair(t,
+		func() security.ClientMechanism { return null.New(nil) },
+		func() security.Mechanism { return null.New(nil) })
+	if cErr != nil || sErr != nil {
+		t.Fatalf("handshake: cErr=%v sErr=%v", cErr, sErr)
+	}
+	payload := []byte("hello world")
+	go func() {
+		if err := c.WriteFrame(wire.Frame{Kind: wire.FrameMessage, Body: payload}); err != nil {
+			t.Errorf("client WriteFrame: %v", err)
+		}
+	}()
+	got, err := s.ReadFrame()
+	if err != nil {
+		t.Fatalf("server ReadFrame: %v", err)
+	}
+	if !bytes.Equal(got.Body, payload) {
+		t.Errorf("body mismatch: got=%q want=%q", got.Body, payload)
+	}
+}
+
+func TestPostHandshakeWriteFrameAfterClose(t *testing.T) {
+	c, _, cErr, sErr := runHandshakePair(t,
+		func() security.ClientMechanism { return null.New(nil) },
+		func() security.Mechanism { return null.New(nil) })
+	if cErr != nil || sErr != nil {
+		t.Fatalf("handshake: cErr=%v sErr=%v", cErr, sErr)
+	}
+	if err := c.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	err := c.WriteFrame(wire.Frame{Kind: wire.FrameMessage, Body: []byte("x")})
+	if err == nil {
+		t.Fatalf("expected error from WriteFrame after Close")
+	}
+	if !errors.Is(err, net.ErrClosed) && !errors.Is(err, io.ErrClosedPipe) {
+		t.Errorf("err = %v, want net.ErrClosed or io.ErrClosedPipe", err)
+	}
+}
+
+func TestPostHandshakeWriteFrameCommandPassthrough(t *testing.T) {
+	c, s, cErr, sErr := runHandshakePair(t,
+		func() security.ClientMechanism { return null.New(nil) },
+		func() security.Mechanism { return null.New(nil) })
+	if cErr != nil || sErr != nil {
+		t.Fatalf("handshake: cErr=%v sErr=%v", cErr, sErr)
+	}
+	body, _ := wire.EncodeCommand(wire.Command{Name: wire.CancelCommandName, Data: []byte("topic.")})
+	go func() {
+		// FrameCommand bypasses mech.Wrap — peer should see verbatim bytes.
+		if err := c.WriteFrame(wire.Frame{Kind: wire.FrameCommand, Body: body}); err != nil {
+			t.Errorf("client WriteFrame: %v", err)
+		}
+	}()
+	got, err := s.ReadFrame()
+	if err != nil {
+		t.Fatalf("server ReadFrame: %v", err)
+	}
+	if got.Kind != wire.FrameCommand {
+		t.Errorf("Kind = %v, want FrameCommand", got.Kind)
+	}
+	if !bytes.Equal(got.Body, body) {
+		t.Errorf("body mismatch")
+	}
+}
+
+func TestPostHandshakeWriteFrameConcurrent(t *testing.T) {
+	c, s, cErr, sErr := runHandshakePair(t,
+		func() security.ClientMechanism { return null.New(nil) },
+		func() security.Mechanism { return null.New(nil) })
+	if cErr != nil || sErr != nil {
+		t.Fatalf("handshake: cErr=%v sErr=%v", cErr, sErr)
+	}
+	const N = 50
+	// Server reader: collect N frames.
+	gotBodies := make([][]byte, 0, N)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for range N {
+			f, err := s.ReadFrame()
+			if err != nil {
+				t.Errorf("server ReadFrame: %v", err)
+				return
+			}
+			gotBodies = append(gotBodies, append([]byte(nil), f.Body...))
+		}
+	}()
+	// N concurrent writers on client.
+	var wg sync.WaitGroup
+	wg.Add(N)
+	for i := range N {
+		i := i
+		go func() {
+			defer wg.Done()
+			payload := []byte{byte(i)}
+			if err := c.WriteFrame(wire.Frame{Kind: wire.FrameMessage, Body: payload}); err != nil {
+				t.Errorf("WriteFrame[%d]: %v", i, err)
+			}
+		}()
+	}
+	wg.Wait()
+	<-done
+	// Each frame's body must be intact (no interleaving). The SET of i
+	// values seen must equal {0..N-1}.
+	seen := make(map[byte]bool)
+	for _, b := range gotBodies {
+		if len(b) != 1 {
+			t.Errorf("frame body len = %d, want 1 (concurrent write interleaved bytes!)", len(b))
+		} else {
+			seen[b[0]] = true
+		}
+	}
+	for i := range N {
+		if !seen[byte(i)] {
+			t.Errorf("missing payload byte %d", i)
+		}
+	}
+}
