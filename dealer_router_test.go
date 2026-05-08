@@ -166,3 +166,22 @@ func TestDEALERCtxCancelSend(t *testing.T) {
 		t.Fatalf("want context.Canceled, got %v", err)
 	}
 }
+
+func TestDEALERRoundRobin(t *testing.T) {
+	// Round-robin distribution requires concurrent multi-peer DEALER sends.
+	// Correct structure: 1 ROUTER Bind + 3 DEALER connects; send 9 messages
+	// (3 per DEALER), collect at ROUTER, assert each DEALER contributed 3.
+	// Deferred: see spec §7.2.
+	t.Skip("round-robin distribution assertion: requires 1 ROUTER + 3 DEALER connects")
+}
+
+func TestROUTERCtxCancel(t *testing.T) {
+	router := zmq4.NewROUTER() // no peers — Recv will block
+	t.Cleanup(func() { router.Close() })
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // pre-cancel
+	_, err := router.Recv(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("want context.Canceled, got %v", err)
+	}
+}
