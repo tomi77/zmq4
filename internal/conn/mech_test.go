@@ -157,19 +157,25 @@ func TestConformanceTable(t *testing.T) {
 			// Property: PeerMetadata is decoupled from the mechanism
 			// (defensive clone per spec §4.2). After dropping the mech
 			// reference and forcing GC, PeerMetadata must remain valid.
-			cMeta := c.PeerMetadata()
-			c.mech = nil
-			runtime.GC()
-			runtime.GC()
-			if len(cMeta) == 0 {
-				t.Errorf("PeerMetadata empty after mech reference drop")
-			}
-			for _, p := range cMeta {
-				if string(p.Name) == "Socket-Type" && string(p.Value) == "PAIR" {
+			assertDecoupled := func(side string, conn *Conn) {
+				t.Helper()
+				meta := conn.PeerMetadata()
+				conn.mech = nil
+				runtime.GC()
+				runtime.GC()
+				if len(meta) == 0 {
+					t.Errorf("%s: PeerMetadata empty after mech reference drop", side)
 					return
 				}
+				for _, p := range meta {
+					if string(p.Name) == "Socket-Type" && string(p.Value) == "PAIR" {
+						return
+					}
+				}
+				t.Errorf("%s: PeerMetadata corrupted after mech reference drop: %+v", side, meta)
 			}
-			t.Errorf("PeerMetadata corrupted after mech reference drop: %+v", cMeta)
+			assertDecoupled("client", c)
+			assertDecoupled("server", s)
 		})
 	}
 }
