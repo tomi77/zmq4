@@ -1,0 +1,219 @@
+package zmq4
+
+import (
+	"context"
+	"net"
+	"reflect"
+	"sync"
+
+	"github.com/tomi77/zmq4/internal/conn"
+	"github.com/tomi77/zmq4/internal/transport"
+)
+
+// compatiblePeers maps local socket type to allowed peer socket types.
+var compatiblePeers = map[string]map[string]bool{
+	"REQ":    {"REP": true, "ROUTER": true},
+	"REP":    {"REQ": true, "DEALER": true},
+	"DEALER": {"REP": true, "ROUTER": true, "DEALER": true},
+	"ROUTER": {"REQ": true, "DEALER": true, "ROUTER": true},
+}
+
+// socketBase holds shared goroutine and lifecycle machinery for all socket
+// types. Concrete types embed socketBase.
+type socketBase struct {
+	cfg       *socketConfig
+	pipes     *pipeSet
+	closeCh   chan struct{}
+	closeOnce sync.Once
+	wg        sync.WaitGroup // tracks acceptor + handshake goroutines
+}
+
+func newSocketBase(cfg *socketConfig) socketBase {
+	return socketBase{
+		cfg:     cfg,
+		pipes:   newPipeSet(),
+		closeCh: make(chan struct{}),
+	}
+}
+
+// bind opens a listener on endpoint and launches a background acceptor
+// goroutine. Non-blocking after the listener is established.
+func (sb *socketBase) bind(ctx context.Context, endpoint, socketType string) error {
+	ln, err := transport.Listen(ctx, endpoint)
+	if err != nil {
+		return err
+	}
+	sb.wg.Add(1)
+	go sb.acceptLoop(ln, socketType)
+	return nil
+}
+
+func (sb *socketBase) acceptLoop(ln net.Listener, socketType string) {
+	defer sb.wg.Done()
+	defer ln.Close()
+	for {
+		raw, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		sb.wg.Add(1)
+		go sb.doServerHandshake(raw, socketType)
+	}
+}
+
+func (sb *socketBase) doServerHandshake(raw net.Conn, socketType string) {
+	defer sb.wg.Done()
+	hsCtx, cancel := context.WithTimeout(context.Background(), sb.cfg.handshakeTimeout)
+	defer cancel()
+
+	mech, err := sb.cfg.serverMechFactory(socketType)
+	if err != nil {
+		raw.Close()
+		return
+	}
+	c, err := conn.ServerHandshake(hsCtx, raw, mech)
+	if err != nil {
+		return
+	}
+	if err := sb.addConn(c, socketType); err != nil {
+		c.Close()
+	}
+}
+
+// connect dials endpoint, runs the ZMTP handshake, and adds the resulting
+// pipe. Blocking — returns after handshake succeeds or fails.
+func (sb *socketBase) connect(ctx context.Context, endpoint, socketType string) error {
+	raw, err := transport.Dial(ctx, endpoint)
+	if err != nil {
+		return err
+	}
+	hsCtx, cancel := context.WithTimeout(ctx, sb.cfg.handshakeTimeout)
+	defer cancel()
+
+	mech, err := sb.cfg.clientMechFactory(socketType)
+	if err != nil {
+		raw.Close()
+		return err
+	}
+	c, err := conn.ClientHandshake(hsCtx, raw, mech)
+	if err != nil {
+		return err
+	}
+	if err := sb.addConn(c, socketType); err != nil {
+		c.Close()
+		return err
+	}
+	return nil
+}
+
+// addConn validates socket-type compatibility, creates a pipe, and starts it.
+func (sb *socketBase) addConn(c *conn.Conn, localSocketType string) error {
+	meta := c.PeerMetadata()
+	// Look up Socket-Type in wire.Metadata (a slice of MetadataProperty).
+	// Use the Get method for case-insensitive lookup.
+	peerTypeBytes, _ := meta.Get("Socket-Type")
+	peerType := string(peerTypeBytes)
+	if peerType != "" {
+		allowed := compatiblePeers[localSocketType]
+		if !allowed[peerType] {
+			return ErrIncompatiblePeer
+		}
+	}
+	identity := peerIdentity(meta)
+	p := newPipe(c, identity)
+	sb.pipes.add(p)
+	p.start(sb.pipes, sb.closeCh)
+	return nil
+}
+
+// close stops all acceptors and reader goroutines, waits for them to exit.
+// Idempotent.
+func (sb *socketBase) close() {
+	sb.closeOnce.Do(func() {
+		close(sb.closeCh)
+		for _, p := range sb.pipes.all() {
+			p.conn.Close()
+		}
+		sb.wg.Wait()
+		for _, p := range sb.pipes.all() {
+			p.wg.Wait()
+		}
+	})
+}
+
+// recvAny fair-queues across all pipes using reflect.Select. Retries on dead pipes.
+func (sb *socketBase) recvAny(ctx context.Context) (Message, *pipe, error) {
+	for {
+		pipes := sb.pipes.all()
+		if len(pipes) == 0 {
+			select {
+			case <-sb.pipes.currentAdded():
+			case <-ctx.Done():
+				return nil, nil, ctx.Err()
+			case <-sb.closeCh:
+				return nil, nil, ErrClosed
+			}
+			continue
+		}
+		msg, p, err := recvFromPipes(ctx, pipes, sb.closeCh)
+		if err != nil {
+			return nil, nil, err
+		}
+		if msg == nil {
+			// Dead pipe — removed by readLoop; retry.
+			continue
+		}
+		return msg, p, nil
+	}
+}
+
+// recvFromPipes fair-queues across a snapshot of pipes using reflect.Select.
+func recvFromPipes(ctx context.Context, pipes []*pipe, closeCh <-chan struct{}) (Message, *pipe, error) {
+	cases := make([]reflect.SelectCase, 2+len(pipes))
+	cases[0] = reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ctx.Done())}
+	cases[1] = reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(closeCh)}
+	for i, p := range pipes {
+		cases[2+i] = reflect.SelectCase{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(p.inCh)}
+	}
+	chosen, recv, ok := reflect.Select(cases)
+	switch chosen {
+	case 0:
+		return nil, nil, ctx.Err()
+	case 1:
+		return nil, nil, ErrClosed
+	default:
+		p := pipes[chosen-2]
+		if !ok {
+			return nil, p, nil // dead pipe — caller retries
+		}
+		return recv.Interface().(Message), p, nil
+	}
+}
+
+// sendWaitPipe waits until a pipe is available for sending, then returns it.
+func (sb *socketBase) sendWaitPipe(ctx context.Context) (*pipe, error) {
+	for {
+		added := sb.pipes.currentAdded()
+		p := sb.pipes.next()
+		if p != nil {
+			return p, nil
+		}
+		select {
+		case <-added:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-sb.closeCh:
+			return nil, ErrClosed
+		}
+	}
+}
+
+// isClosing reports whether the socket is closed or closing.
+func (sb *socketBase) isClosing() bool {
+	select {
+	case <-sb.closeCh:
+		return true
+	default:
+		return false
+	}
+}
