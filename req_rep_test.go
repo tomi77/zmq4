@@ -242,7 +242,9 @@ func TestREPFairQueue(t *testing.T) {
 			t.Fatalf("Recv: %v", err)
 		}
 		seen[int(msg[0][0])]++
-		rep.Send(ctx, msg)
+		if err := rep.Send(ctx, msg); err != nil {
+			t.Fatalf("Send echo: %v", err)
+		}
 	}
 	for i := range N {
 		if seen[i] != 1 {
