@@ -313,6 +313,13 @@ func TestPlainServerUnwrapPassthrough(t *testing.T) {
 	}
 }
 
+func TestServerStateName(t *testing.T) {
+	s := NewServer(func(_, _ []byte) error { return nil }, nil)
+	if got := s.Name(); got != "PLAIN" {
+		t.Fatalf("Name() = %q, want %q", got, "PLAIN")
+	}
+}
+
 func newPlainServerDone(t *testing.T) *ServerState {
 	t.Helper()
 	s := NewServer(acceptAll, nil)

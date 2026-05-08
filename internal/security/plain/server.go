@@ -61,6 +61,9 @@ func (s *ServerState) Unwrap(f wire.Frame) (wire.Frame, error) {
 	return f, nil
 }
 
+// Name returns "PLAIN". See security.Mechanism.Name.
+func (s *ServerState) Name() string { return "PLAIN" }
+
 // Receive consumes one peer command and advances the state machine.
 // See spec §4.2 for the contract.
 func (s *ServerState) Receive(cmd wire.Command) (out *wire.Command, done bool, err error) {
