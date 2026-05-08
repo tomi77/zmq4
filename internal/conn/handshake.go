@@ -59,13 +59,15 @@ func runWithCtxDeadline(ctx context.Context, raw net.Conn, fn func() error) erro
 
 	done := make(chan struct{})
 	var wg sync.WaitGroup
-	wg.Go(func() {
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
 		select {
 		case <-ctx.Done():
 			_ = raw.SetDeadline(time.Unix(1, 0))
 		case <-done:
 		}
-	})
+	}()
 
 	err := fn()
 	close(done)

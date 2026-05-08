@@ -302,6 +302,7 @@ func TestPostHandshakeWriteFrameConcurrent(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(N)
 	for i := range N {
+		i := i
 		go func() {
 			defer wg.Done()
 			payload := []byte{byte(i)}
@@ -432,6 +433,7 @@ func TestPostHandshakeRaceDetectorClean(t *testing.T) {
 		}
 	}()
 	for i := range N {
+		i := i
 		go func() {
 			defer wg.Done()
 			_ = c.WriteFrame(wire.Frame{Kind: wire.FrameMessage, Body: []byte{byte(i)}})
