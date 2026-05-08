@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tomi77/zmq4/internal/security"
+	"github.com/tomi77/zmq4/internal/security/curve"
 	"github.com/tomi77/zmq4/internal/security/null"
 	"github.com/tomi77/zmq4/internal/security/plain"
 	"github.com/tomi77/zmq4/internal/wire"
@@ -508,5 +510,164 @@ func TestRunHandshakeLoopCommandCap(t *testing.T) {
 	err := runHandshakeLoop(a, fw, stub, cfg)
 	if !errors.Is(err, ErrCommandTooLarge) {
 		t.Fatalf("err = %v, want ErrCommandTooLarge", err)
+	}
+}
+
+func runHandshakePair(t *testing.T,
+	mkClient func() security.ClientMechanism,
+	mkServer func() security.Mechanism,
+) (cConn, sConn *Conn, cErr, sErr error) {
+	t.Helper()
+	a, b := net.Pipe()
+	t.Cleanup(func() {
+		_ = a.Close()
+		_ = b.Close()
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	t.Cleanup(cancel)
+	type cres struct {
+		c   *Conn
+		err error
+	}
+	cChan := make(chan cres, 1)
+	sChan := make(chan cres, 1)
+	go func() {
+		c, err := ClientHandshake(ctx, a, mkClient())
+		cChan <- cres{c, err}
+	}()
+	go func() {
+		c, err := ServerHandshake(ctx, b, mkServer())
+		sChan <- cres{c, err}
+	}()
+	cR := <-cChan
+	sR := <-sChan
+	t.Cleanup(func() {
+		if cR.c != nil {
+			_ = cR.c.Close()
+		}
+		if sR.c != nil {
+			_ = sR.c.Close()
+		}
+	})
+	return cR.c, sR.c, cR.err, sR.err
+}
+
+func TestClientServerHandshakeNULL(t *testing.T) {
+	c, s, cErr, sErr := runHandshakePair(t,
+		func() security.ClientMechanism { return null.New(nil) },
+		func() security.Mechanism { return null.New(nil) })
+	if cErr != nil {
+		t.Errorf("client: %v", cErr)
+	}
+	if sErr != nil {
+		t.Errorf("server: %v", sErr)
+	}
+	if c == nil || s == nil {
+		t.Fatalf("nil Conn returned: c=%v s=%v", c, s)
+	}
+	if c.PeerMetadata() == nil {
+		t.Errorf("client peerMeta is nil; want defensive clone (may be empty Metadata{})")
+	}
+}
+
+func TestClientServerHandshakePLAIN(t *testing.T) {
+	c, s, cErr, sErr := runHandshakePair(t,
+		func() security.ClientMechanism {
+			cli, err := plain.NewClient([]byte("user"), []byte("pass"), nil)
+			if err != nil {
+				t.Fatalf("plain.NewClient: %v", err)
+			}
+			return cli
+		},
+		func() security.Mechanism {
+			return plain.NewServer(func(_, _ []byte) error { return nil }, nil)
+		})
+	if cErr != nil {
+		t.Errorf("client: %v", cErr)
+	}
+	if sErr != nil {
+		t.Errorf("server: %v", sErr)
+	}
+	if c == nil || s == nil {
+		t.Fatalf("nil Conn returned: c=%v s=%v", c, s)
+	}
+}
+
+func TestClientServerHandshakeCURVE(t *testing.T) {
+	clientPub, clientSec, err := curve.GenerateKeyPair(nil)
+	if err != nil {
+		t.Fatalf("client keypair: %v", err)
+	}
+	serverPub, serverSec, err := curve.GenerateKeyPair(nil)
+	if err != nil {
+		t.Fatalf("server keypair: %v", err)
+	}
+	c, s, cErr, sErr := runHandshakePair(t,
+		func() security.ClientMechanism {
+			cli, err := curve.NewClient(curve.ClientOptions{
+				ServerKey: serverPub, OurPublicKey: clientPub, OurSecretKey: &clientSec,
+			})
+			if err != nil {
+				t.Fatalf("curve.NewClient: %v", err)
+			}
+			return cli
+		},
+		func() security.Mechanism {
+			s, err := curve.NewServer(curve.ServerOptions{
+				OurPublicKey: serverPub, OurSecretKey: &serverSec,
+				Authorizer: func(_ curve.PublicKey, _ wire.Metadata) error { return nil },
+			})
+			if err != nil {
+				t.Fatalf("curve.NewServer: %v", err)
+			}
+			return s
+		})
+	if cErr != nil {
+		t.Errorf("client: %v", cErr)
+	}
+	if sErr != nil {
+		t.Errorf("server: %v", sErr)
+	}
+	if c == nil || s == nil {
+		t.Fatalf("nil Conn returned: c=%v s=%v", c, s)
+	}
+}
+
+func TestClientHandshakeNoDeadline(t *testing.T) {
+	a, b := net.Pipe()
+	defer a.Close()
+	defer b.Close()
+	_, err := ClientHandshake(context.Background(), a, null.New(nil))
+	if !errors.Is(err, ErrNoDeadline) {
+		t.Fatalf("err = %v, want ErrNoDeadline", err)
+	}
+	// raw must NOT be closed.
+	go func() { _, _ = b.Write([]byte{0}) }()
+	buf := make([]byte, 1)
+	if _, err := io.ReadFull(a, buf); err != nil {
+		t.Fatalf("raw was unexpectedly closed: %v", err)
+	}
+}
+
+func TestClientHandshakeCtxCancelClosesRaw(t *testing.T) {
+	a, b := net.Pipe()
+	defer b.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel() // ensures cancel func is called on every test exit path (go vet appeasement).
+	timeoutCtx, timeoutCancel := context.WithTimeout(ctx, 2*time.Second)
+	defer timeoutCancel()
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		cancel()
+	}()
+	// Server side does not respond → handshake stalls until cancel.
+	_, err := ClientHandshake(timeoutCtx, a, null.New(nil))
+	if err == nil {
+		t.Fatalf("expected error from cancelled handshake")
+	}
+	// raw should be closed: a.Read should return ErrClosedPipe.
+	buf := make([]byte, 1)
+	if _, err := a.Read(buf); err == nil {
+		t.Errorf("raw not closed after cancel")
 	}
 }

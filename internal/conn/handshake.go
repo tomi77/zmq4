@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tomi77/zmq4/internal/security"
+	"github.com/tomi77/zmq4/internal/security/seccommon"
 	"github.com/tomi77/zmq4/internal/wire"
 )
 
@@ -272,4 +273,110 @@ func isMetadataBearing(name string) bool {
 	default:
 		return false
 	}
+}
+
+// ClientHandshake performs the ZMTP greeting and security handshake on
+// the active side. raw is a connected net.Conn (typically the result of
+// transport.Dial). mech is a configured ClientMechanism; F5 owns its
+// construction and metadata setup.
+//
+// ctx MUST carry a deadline. Without one, ClientHandshake returns
+// ErrNoDeadline before touching raw.
+//
+// On success, returns a *Conn ready for ReadFrame/WriteFrame; raw is
+// owned by *Conn (Close releases it). On failure, raw is closed by F4
+// and the error is returned (wrapped with %w).
+func ClientHandshake(ctx context.Context, raw net.Conn,
+	mech security.ClientMechanism, opts ...Option) (*Conn, error) {
+	return doHandshake(ctx, raw, mech, mech, greetingRoleClient, opts)
+}
+
+// ServerHandshake performs the ZMTP greeting and security handshake on
+// the passive side. Symmetric to ClientHandshake, taking the base
+// Mechanism interface (no Start required).
+func ServerHandshake(ctx context.Context, raw net.Conn,
+	mech security.Mechanism, opts ...Option) (*Conn, error) {
+	return doHandshake(ctx, raw, mech, nil, greetingRoleServer, opts)
+}
+
+// doHandshake is the shared implementation. activeMech is non-nil only
+// for clients; when set, doHandshake calls activeMech.Start() between
+// greeting and the loop.
+func doHandshake(ctx context.Context, raw net.Conn,
+	mech security.Mechanism, activeMech security.ClientMechanism,
+	role greetingRole, opts []Option) (*Conn, error) {
+
+	cfg := newConfig(opts)
+
+	// Pre-deadline check: ErrNoDeadline must fire before raw is touched.
+	if _, ok := ctx.Deadline(); !ok {
+		return nil, ErrNoDeadline
+	}
+
+	var c *Conn
+	err := runWithCtxDeadline(ctx, raw, func() error {
+		// 1. Greeting (lockstep, asymmetric send order).
+		if err := greetingExchange(raw, role, mech); err != nil {
+			return err
+		}
+		// 2. Emit Start() if needed.
+		// Client (activeMech != nil): send synchronously before entering the
+		// receive loop (spec §6.2: active side initiates).
+		// Server with a symmetric mechanism (NULL): Start() is also required,
+		// but must be fired in a goroutine so that the two peers' READY frames
+		// do not deadlock on net.Pipe's synchronous transport.
+		fw := wire.NewFrameWriter(raw)
+		if activeMech != nil {
+			startCmd, err := activeMech.Start()
+			if err != nil {
+				emitERROR(fw, err.Error())
+				return fmt.Errorf("%w: mech.Start: %v", ErrHandshakeFail, err)
+			}
+			body, err := wire.EncodeCommand(startCmd)
+			if err != nil {
+				return fmt.Errorf("%w: encode Start: %v", ErrHandshakeFail, err)
+			}
+			if err := fw.WriteFrame(wire.Frame{Kind: wire.FrameCommand, Body: body}); err != nil {
+				return err
+			}
+		} else if cm, ok := mech.(security.ClientMechanism); ok {
+			// Symmetric mechanism on the server side (NULL): fire Start() in a
+			// goroutine. Write errors are swallowed — any real I/O failure
+			// surfaces on the read path in runHandshakeLoop below.
+			startCmd, err := cm.Start()
+			if err != nil {
+				return fmt.Errorf("%w: mech.Start: %v", ErrHandshakeFail, err)
+			}
+			body, err := wire.EncodeCommand(startCmd)
+			if err != nil {
+				return fmt.Errorf("%w: encode Start: %v", ErrHandshakeFail, err)
+			}
+			go func() {
+				_ = fw.WriteFrame(wire.Frame{Kind: wire.FrameCommand, Body: body})
+			}()
+		}
+		// 3. Drive the loop.
+		if err := runHandshakeLoop(raw, fw, mech, cfg); err != nil {
+			return err
+		}
+		// 4. Build the post-handshake *Conn.
+		peerMeta := seccommon.CloneMetadata(mech.PeerMetadata())
+		if peerMeta == nil {
+			peerMeta = wire.Metadata{}
+		}
+		c = &Conn{
+			raw:      raw,
+			fr:       wire.NewFrameReader(raw, wire.WithMaxBodySize(cfg.maxFrameBodySize)),
+			fw:       fw,
+			mech:     mech,
+			peerMeta: peerMeta,
+		}
+		return nil
+	})
+
+	if err != nil {
+		_ = raw.Close()
+		return nil, err
+	}
+	return c, nil
 }
