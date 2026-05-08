@@ -98,9 +98,12 @@ func makeOurMechServer(t *testing.T, row interopRow,
 }
 
 // fixtureSpec builds the libzmq side of the conversation.
+// curveServerPub/Sec: our F4 server's key pair (used by libzmq-as-server in we_dial,
+// and as the ServerKey libzmq-as-client must authenticate against in we_listen).
+// curveClientPub/Sec: our F4 client's key pair (used by libzmq-as-client in we_listen).
 func fixtureSpec(t *testing.T, row interopRow,
-	curveServerPub curve.PublicKey, curveServerSec curve.SecretKey, // libzmq side keys
-	curveClientPub curve.PublicKey, // for our-listener case
+	curveServerPub curve.PublicKey, curveServerSec curve.SecretKey,
+	curveClientPub curve.PublicKey, curveClientSec curve.SecretKey,
 	endpoint string, role fixture.Role) fixture.Spec {
 	t.Helper()
 	spec := fixture.Spec{
@@ -124,9 +127,9 @@ func fixtureSpec(t *testing.T, row interopRow,
 		} else {
 			spec.CURVE = fixture.CurveParams{
 				IsServer:  false,
-				ServerKey: z85(curveClientPub),               // our pub is libzmq's "server key"
-				PublicKey: z85(curveServerPub),               // libzmq's own pubkey
-				SecretKey: z85([32]byte(curveServerSec)),     // libzmq's own privkey
+				ServerKey: z85(curveServerPub),           // our F4 server pub (libzmq must auth against this)
+				PublicKey: z85(curveClientPub),           // libzmq's own pubkey
+				SecretKey: z85([32]byte(curveClientSec)), // libzmq's own privkey
 			}
 		}
 	}
@@ -207,7 +210,7 @@ func runInteropRow(t *testing.T, row interopRow,
 	if row.dir == "we_dial" {
 		// libzmq listens on a wildcard port; we dial whatever it returns.
 		bridgeEndpoint, sharedDir := allocLibzmqListenEndpoint(t, row.scheme)
-		spec := fixtureSpec(t, row, serverPub, serverSec, clientPub, bridgeEndpoint, fixture.RoleListener)
+		spec := fixtureSpec(t, row, serverPub, serverSec, clientPub, clientSec, bridgeEndpoint, fixture.RoleListener)
 		spec.IPCBindMountHost = sharedDir
 		peer := fixture.Start(t, spec)
 
@@ -244,7 +247,7 @@ func runInteropRow(t *testing.T, row interopRow,
 	if row.scheme == "tcp" {
 		bridgeEndpoint = "tcp://" + lis.Addr().String()
 	}
-	spec := fixtureSpec(t, row, serverPub, serverSec, clientPub, bridgeEndpoint, fixture.RoleDialer)
+	spec := fixtureSpec(t, row, serverPub, serverSec, clientPub, clientSec, bridgeEndpoint, fixture.RoleDialer)
 	spec.IPCBindMountHost = sharedDir
 	peer := fixture.Start(t, spec)
 
@@ -319,6 +322,8 @@ func runScenario(t *testing.T, ctx context.Context, ourConn *conn.Conn, sc fixtu
 			}
 		}
 	}
+	// ctx is not threaded into ReadFrame/WriteFrame yet; retained in the
+	// signature so Task 22 error-path tests can share this helper unchanged.
 	_ = ctx
 }
 
@@ -337,10 +342,8 @@ func allocLibzmqListenEndpoint(t *testing.T, scheme string) (endpoint, sharedDir
 	case "tcp":
 		return "tcp://127.0.0.1:0", ""
 	case "ipc":
+		// ipc subtests require Linux (fixture.Start skips on non-Linux).
 		dir := t.TempDir()
-		// t.TempDir under macOS is sometimes /var/folders/... whose
-		// inner path is too long for AF_UNIX (104 chars). On Linux
-		// we are usually under /tmp. Trust t.TempDir on Linux.
 		path := filepath.Join(dir, "zmq.sock")
 		return "ipc://" + path, dir
 	}
