@@ -78,3 +78,9 @@ func validateCommandName(name string) error {
 func isCommandNameChar(c byte) bool {
 	return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
 }
+
+// MessageCommandName is the wire name for the MESSAGE command — the
+// envelope CURVE wraps user data into post-handshake. NULL and PLAIN
+// do not use it. See RFC 25/CURVEZMQ §"only MESSAGE commands are
+// encrypted".
+const MessageCommandName = "MESSAGE"

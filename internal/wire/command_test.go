@@ -113,3 +113,9 @@ func TestCommandCloneNilData(t *testing.T) {
 		t.Fatalf("clone.Name mismatch: %q vs %q", clone.Name, c.Name)
 	}
 }
+
+func TestMessageCommandName(t *testing.T) {
+	if MessageCommandName != "MESSAGE" {
+		t.Fatalf("MessageCommandName = %q, want %q", MessageCommandName, "MESSAGE")
+	}
+}
