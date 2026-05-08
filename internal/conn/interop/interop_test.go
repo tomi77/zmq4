@@ -5,10 +5,10 @@ package interop_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -397,8 +397,8 @@ func TestInteropMechanismMismatch(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected ErrMechanismMismatch, got nil")
 	}
-	if !strings.Contains(err.Error(), "mechanism mismatch") {
-		t.Errorf("err = %v, want wrap of ErrMechanismMismatch", err)
+	if !errors.Is(err, conn.ErrMechanismMismatch) {
+		t.Errorf("err = %v, want conn.ErrMechanismMismatch", err)
 	}
 }
 
