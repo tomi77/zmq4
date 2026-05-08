@@ -75,7 +75,8 @@ func runWithCtxDeadline(ctx context.Context, raw net.Conn, fn func() error) erro
 }
 
 // greetingRole tags the local side of a greeting exchange. Clients send
-// first; servers read first. The role also determines as-server for
+// synchronously before reading; servers queue their send in a goroutine
+// and read immediately. The role also determines as-server for
 // asymmetric mechanisms (PLAIN, CURVE).
 type greetingRole int
 
@@ -136,6 +137,9 @@ func greetingExchange(raw net.Conn, role greetingRole, mech nameAware) error {
 	buf[9] = 0x7F
 	buf[10] = 0x03
 	if _, err := io.ReadFull(raw, buf[11:]); err != nil {
+		if err == io.EOF {
+			err = io.ErrUnexpectedEOF
+		}
 		return err
 	}
 	peerG, err := wire.DecodeGreeting(buf[:])
@@ -160,14 +164,11 @@ func greetingExchange(raw net.Conn, role greetingRole, mech nameAware) error {
 // mismatch → forwarded as wire.ErrUnsupportedVersion. Truncation /
 // other I/O errors pass through.
 func wrapPhaseA(err error) error {
-	switch {
-	case errors.Is(err, wire.ErrInvalidSignature):
+	if errors.Is(err, wire.ErrInvalidSignature) {
 		return fmt.Errorf("%w: %v", ErrInvalidGreeting, err)
-	case errors.Is(err, wire.ErrUnsupportedVersion):
-		return err
-	default:
-		return err
 	}
+	// wire.ErrUnsupportedVersion and I/O errors pass through unchanged.
+	return err
 }
 
 func errMechMismatch(ours, theirs string) error {
@@ -175,6 +176,5 @@ func errMechMismatch(ours, theirs string) error {
 }
 
 func errRoleConflict(ours, theirs bool) error {
-	return fmt.Errorf("%w: both peers as-server=%t (ours=%t peer=%t)",
-		ErrRoleConflict, ours, ours, theirs)
+	return fmt.Errorf("%w: ours=%t peer=%t", ErrRoleConflict, ours, theirs)
 }
