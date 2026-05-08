@@ -1,7 +1,7 @@
 package conn
 
 import (
-	"errors"
+	"fmt"
 	"net"
 	"sync"
 
@@ -31,14 +31,65 @@ type Conn struct {
 	closed  bool
 }
 
-// ReadFrame is implemented in Chunk 3.
+// ReadFrame reads one post-handshake application frame. NOT goroutine-safe.
+// See *Conn doc-comment for the full return-value contract.
 func (c *Conn) ReadFrame() (wire.Frame, error) {
-	return wire.Frame{}, errors.New("conn: ReadFrame not implemented")
+	f, err := c.fr.ReadFrame()
+	if err != nil {
+		return wire.Frame{}, err
+	}
+	if f.Kind == wire.FrameMessage {
+		// NULL/PLAIN: alias pass-through. CURVE: not expected on this
+		// path — CURVE wraps user data into MESSAGE commands. CURVE.Unwrap
+		// returns its own error which we forward via %w.
+		return c.mech.Unwrap(f)
+	}
+	// f.Kind == FrameCommand
+	cmd, perr := wire.ParseCommand(f.Body)
+	if perr != nil {
+		return wire.Frame{}, fmt.Errorf("conn: bad post-handshake command: %w", perr)
+	}
+	switch cmd.Name {
+	case wire.MessageCommandName:
+		return c.mech.Unwrap(f) // CURVE-only data path.
+	case wire.ErrorCommandName:
+		ec, eperr := wire.ParseError(cmd)
+		if eperr != nil {
+			return wire.Frame{}, fmt.Errorf("conn: malformed peer ERROR: %w", eperr)
+		}
+		return wire.Frame{}, &ErrPeerError{Reason: ec.Reason}
+	default:
+		// SUBSCRIBE / CANCEL / PING / PONG / unknown — pass through to F5.
+		return f, nil
+	}
 }
 
-// WriteFrame is implemented in Chunk 3.
+// WriteFrame writes one post-handshake application frame. Goroutine-safe
+// via internal mutex (one writer at a time on raw; bytes per frame are
+// atomic on the wire). See *Conn doc-comment for the full return-value
+// contract.
 func (c *Conn) WriteFrame(f wire.Frame) error {
-	return errors.New("conn: WriteFrame not implemented")
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+
+	c.closeMu.Lock()
+	closed := c.closed
+	c.closeMu.Unlock()
+	if closed {
+		return net.ErrClosed
+	}
+
+	if f.Kind == wire.FrameMessage {
+		out, err := c.mech.Wrap(f)
+		if err != nil {
+			return fmt.Errorf("conn: mech.Wrap: %w", err)
+		}
+		return c.fw.WriteFrame(out)
+	}
+	// FrameCommand: F5 owns command-name correctness; F4 sends verbatim
+	// (RFC 25 — only MESSAGE commands are encrypted; SUBSCRIBE/CANCEL/
+	// PING/PONG go plaintext even under CURVE).
+	return c.fw.WriteFrame(f)
 }
 
 // PeerMetadata returns the metadata advertised by the peer in handshake.

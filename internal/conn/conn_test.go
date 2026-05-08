@@ -1,11 +1,16 @@
 package conn
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"net"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/tomi77/zmq4/internal/security"
 	"github.com/tomi77/zmq4/internal/security/null"
 	"github.com/tomi77/zmq4/internal/wire"
 )
@@ -84,3 +89,125 @@ func TestConnPeerMetadataReturnsStoredSlice(t *testing.T) {
 		t.Fatalf("PeerMetadata() = %+v, want one Socket-Type=PAIR property", got)
 	}
 }
+
+func TestPostHandshakeReadFrameNULL(t *testing.T) {
+	c, s, cErr, sErr := runHandshakePair(t,
+		func() security.ClientMechanism { return null.New(nil) },
+		func() security.Mechanism { return null.New(nil) })
+	if cErr != nil || sErr != nil {
+		t.Fatalf("handshake: cErr=%v sErr=%v", cErr, sErr)
+	}
+	// Server writes one frame; client reads it.
+	payload := bytes.Repeat([]byte{0xAB}, 1024)
+	go func() {
+		if err := s.WriteFrame(wire.Frame{Kind: wire.FrameMessage, Body: payload}); err != nil {
+			t.Errorf("server WriteFrame: %v", err)
+		}
+	}()
+	got, err := c.ReadFrame()
+	if err != nil {
+		t.Fatalf("client ReadFrame: %v", err)
+	}
+	if got.Kind != wire.FrameMessage {
+		t.Errorf("Kind = %v, want FrameMessage", got.Kind)
+	}
+	if !bytes.Equal(got.Body, payload) {
+		t.Errorf("body mismatch: got len=%d want len=%d", len(got.Body), len(payload))
+	}
+}
+
+func TestPostHandshakeReadFramePeerERROR(t *testing.T) {
+	c, s, cErr, sErr := runHandshakePair(t,
+		func() security.ClientMechanism { return null.New(nil) },
+		func() security.Mechanism { return null.New(nil) })
+	if cErr != nil || sErr != nil {
+		t.Fatalf("handshake: cErr=%v sErr=%v", cErr, sErr)
+	}
+	// Server emits a wire-level ERROR command. WriteFrame on a
+	// FrameCommand bypasses mech.Wrap (per RFC 25 / spec §6.5), so the
+	// public surface produces exactly the bytes a peer ERROR would.
+	go func() {
+		ec, _ := wire.ErrorCommand{Reason: "auth revoked"}.Encode()
+		body, _ := wire.EncodeCommand(ec)
+		if err := s.WriteFrame(wire.Frame{Kind: wire.FrameCommand, Body: body}); err != nil {
+			t.Errorf("server WriteFrame: %v", err)
+		}
+	}()
+	_, err := c.ReadFrame()
+	var pe *ErrPeerError
+	if !errors.As(err, &pe) {
+		t.Fatalf("err = %v, want *ErrPeerError", err)
+	}
+	if pe.Reason != "auth revoked" {
+		t.Errorf("Reason = %q, want %q", pe.Reason, "auth revoked")
+	}
+}
+
+func TestPostHandshakeReadFrameCommandPassthrough(t *testing.T) {
+	c, s, cErr, sErr := runHandshakePair(t,
+		func() security.ClientMechanism { return null.New(nil) },
+		func() security.Mechanism { return null.New(nil) })
+	if cErr != nil || sErr != nil {
+		t.Fatalf("handshake: cErr=%v sErr=%v", cErr, sErr)
+	}
+	// Server sends a SUBSCRIBE command (post-handshake traffic command).
+	go func() {
+		body, _ := wire.EncodeCommand(wire.Command{Name: wire.SubscribeCommandName, Data: []byte("topic.")})
+		if err := s.WriteFrame(wire.Frame{Kind: wire.FrameCommand, Body: body}); err != nil {
+			t.Errorf("server WriteFrame: %v", err)
+		}
+	}()
+	got, err := c.ReadFrame()
+	if err != nil {
+		t.Fatalf("client ReadFrame: %v", err)
+	}
+	if got.Kind != wire.FrameCommand {
+		t.Errorf("Kind = %v, want FrameCommand (pass-through)", got.Kind)
+	}
+	cmd, err := wire.ParseCommand(got.Body)
+	if err != nil {
+		t.Fatalf("ParseCommand: %v", err)
+	}
+	if cmd.Name != wire.SubscribeCommandName {
+		t.Errorf("cmd.Name = %q, want %q", cmd.Name, wire.SubscribeCommandName)
+	}
+	if !bytes.Equal(cmd.Data, []byte("topic.")) {
+		t.Errorf("cmd.Data = %q, want %q", cmd.Data, "topic.")
+	}
+}
+
+func TestPostHandshakeReadFrameMalformedCommand(t *testing.T) {
+	c, s, cErr, sErr := runHandshakePair(t,
+		func() security.ClientMechanism { return null.New(nil) },
+		func() security.Mechanism { return null.New(nil) })
+	if cErr != nil || sErr != nil {
+		t.Fatalf("handshake: cErr=%v sErr=%v", cErr, sErr)
+	}
+	// Server sends a FrameCommand with an empty body — wire.ParseCommand
+	// rejects this (empty body → ErrInvalidCommand). WriteFrame bypasses
+	// mech.Wrap on FrameCommand, so the empty body reaches the peer
+	// verbatim. The connection may be torn down by cleanup before
+	// WriteFrame returns (net.Buffers.WriteTo does a follow-up write for
+	// the empty body), so io.ErrClosedPipe is an acceptable outcome.
+	go func() {
+		if err := s.WriteFrame(wire.Frame{Kind: wire.FrameCommand, Body: []byte{}}); err != nil {
+			if !errors.Is(err, io.ErrClosedPipe) && !errors.Is(err, net.ErrClosed) {
+				t.Errorf("server WriteFrame: %v", err)
+			}
+		}
+	}()
+	_, err := c.ReadFrame()
+	if err == nil {
+		t.Fatalf("expected error from malformed command, got nil")
+	}
+	if !errors.Is(err, wire.ErrInvalidCommand) {
+		t.Errorf("err = %v, want errors.Is(err, wire.ErrInvalidCommand)", err)
+	}
+	if !strings.Contains(err.Error(), "conn: bad post-handshake command") {
+		t.Errorf("err message %q does not contain expected prefix", err.Error())
+	}
+}
+
+// Ensure the new imports are used (compile guard for sync and time).
+var _ sync.Mutex
+var _ = time.Second
