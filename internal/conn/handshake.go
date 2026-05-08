@@ -333,6 +333,13 @@ func doHandshake(ctx context.Context, raw net.Conn,
 		// but must be fired in a goroutine so that the two peers' READY frames
 		// do not deadlock on net.Pipe's synchronous transport.
 		fw := wire.NewFrameWriter(raw)
+		// readyWritten is closed by the server's READY goroutine once the
+		// READY frame is fully written. It is nil for the client path (no
+		// goroutine is spawned there). We wait on it after runHandshakeLoop
+		// so that callers which close the conn immediately after doHandshake
+		// (e.g. addConn returning ErrIncompatiblePeer) do not race with the
+		// goroutine write and interrupt the client mid-handshake.
+		var readyWritten <-chan struct{}
 		if activeMech != nil {
 			startCmd, err := activeMech.Start()
 			if err != nil {
@@ -370,7 +377,10 @@ func doHandshake(ctx context.Context, raw net.Conn,
 			if err != nil {
 				return fmt.Errorf("%w: encode Start: %v", ErrHandshakeFail, err)
 			}
+			ch := make(chan struct{})
+			readyWritten = ch
 			go func() {
+				defer close(ch)
 				if greetingDone != nil {
 					<-greetingDone
 				}
@@ -380,6 +390,13 @@ func doHandshake(ctx context.Context, raw net.Conn,
 		// 3. Drive the loop.
 		if err := runHandshakeLoop(raw, fw, mech, cfg); err != nil {
 			return err
+		}
+		// Wait for the server's READY goroutine to finish writing before
+		// returning. Without this barrier, a caller that closes the conn
+		// immediately after doHandshake (e.g. on incompatible-peer rejection)
+		// may race with the goroutine and interrupt the peer mid-handshake.
+		if readyWritten != nil {
+			<-readyWritten
 		}
 		// 4. Build the post-handshake *Conn.
 		peerMeta := seccommon.CloneMetadata(mech.PeerMetadata())
