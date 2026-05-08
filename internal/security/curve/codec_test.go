@@ -22,8 +22,8 @@ func TestEncodeHelloRoundTrip(t *testing.T) {
 	clientPub, clientSec := makePair(t)
 	serverPub, serverSec := makePair(t)
 
-	helloShared := precompute(serverPub, &clientSec)   // c' × S
-	openShared := precompute(clientPub, &serverSec)    // s × C'
+	helloShared := precompute(serverPub, &clientSec) // c' × S
+	openShared := precompute(clientPub, &serverSec)  // s × C'
 
 	cmd, err := encodeHello(clientPub, helloShared, 1, rand.Reader)
 	if err != nil {

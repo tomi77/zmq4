@@ -8,9 +8,9 @@ import (
 
 func TestParseEndpointValid(t *testing.T) {
 	cases := []struct {
-		in           string
-		wantScheme   string
-		wantAddr     string
+		in         string
+		wantScheme string
+		wantAddr   string
 	}{
 		{"tcp://127.0.0.1:5555", "tcp", "127.0.0.1:5555"},
 		{"tcp://[::1]:5555", "tcp", "[::1]:5555"},

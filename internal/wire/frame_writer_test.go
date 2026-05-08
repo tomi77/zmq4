@@ -62,4 +62,3 @@ func TestFrameWriterEmptyBody(t *testing.T) {
 		}
 	}
 }
-

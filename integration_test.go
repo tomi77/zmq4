@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -15,25 +17,18 @@ import (
 	"github.com/tomi77/zmq4/internal/wire"
 )
 
-// tcpPort returns a deterministic fixed port for each (transport, security,
-// pair) combination. Only TCP tests use ports; inproc and ipc use name-based
-// addressing so they don't need numeric ports.
-//
-// Layout (6 TCP subtests × 1 port each, base 25550):
-//
-//	tcp/null/reqrep        → 25550
-//	tcp/null/dealerrouter  → 25551
-//	tcp/plain/reqrep       → 25552
-//	tcp/plain/dealerrouter → 25553
-//	tcp/curve/reqrep       → 25554
-//	tcp/curve/dealerrouter → 25555
-var tcpPortMap = map[string]int{
-	"null/reqrep":        25550,
-	"null/dealerrouter":  25551,
-	"plain/reqrep":       25552,
-	"plain/dealerrouter": 25553,
-	"curve/reqrep":       25554,
-	"curve/dealerrouter": 25555,
+// freePort returns an ephemeral TCP port that was free at time of call.
+// There is an inherent TOCTOU gap between this call and Bind, but it is far
+// less collision-prone than fixed ports across parallel CI runs.
+func freePort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("freePort: %v", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	ln.Close()
+	return port
 }
 
 type integRow struct {
@@ -68,15 +63,13 @@ func runIntegRow(t *testing.T, row integRow) {
 	var ep string
 	switch row.transport {
 	case "tcp":
-		port, ok := tcpPortMap[row.security+"/"+row.pair]
-		if !ok {
-			t.Fatalf("no port mapping for tcp/%s/%s", row.security, row.pair)
-		}
-		ep = fmt.Sprintf("tcp://127.0.0.1:%d", port)
+		ep = fmt.Sprintf("tcp://127.0.0.1:%d", freePort(t))
 	case "ipc":
-		ep = "ipc:///tmp/zmq4-integ-" + row.security + "-" + row.pair + ".sock"
+		ep = "ipc://" + filepath.Join(t.TempDir(), row.security+"-"+row.pair+".sock")
 	case "inproc":
 		ep = "inproc://integ-" + row.transport + "-" + row.security + "-" + row.pair
+	default:
+		t.Fatalf("unknown transport %q", row.transport)
 	}
 
 	serverOpts, clientOpts := securityOpts(t, row.security)
@@ -113,12 +106,14 @@ func securityOpts(t *testing.T, security string) (serverOpts, clientOpts []zmq4.
 		if err != nil {
 			t.Fatalf("curve.GenerateKeyPair (server): %v", err)
 		}
+		defer serverSec.Zero()
 
 		// Generate client long-term keypair.
 		clientPub, clientSec, err := curve.GenerateKeyPair(nil)
 		if err != nil {
 			t.Fatalf("curve.GenerateKeyPair (client): %v", err)
 		}
+		defer clientSec.Zero()
 
 		// Authorizer: accept any client (key-pinning is out of scope here).
 		authorizer := curve.Authorizer(func(_ curve.PublicKey, _ wire.Metadata) error {
