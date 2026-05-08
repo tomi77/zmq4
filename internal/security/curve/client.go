@@ -105,6 +105,9 @@ func NewClient(opts ClientOptions) (*ClientState, error) {
 // Done reports whether the handshake completed successfully.
 func (c *ClientState) Done() bool { return c.done && !c.failed && !c.closed }
 
+// Name returns "CURVE". See security.Mechanism.Name.
+func (c *ClientState) Name() string { return "CURVE" }
+
 // Start generates the transient keypair, precomputes handshakeShared
 // and vouchShared, emits HELLO, and transitions to AWAIT_WELCOME. Must
 // be called exactly once before Receive.
