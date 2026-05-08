@@ -17,7 +17,6 @@ const (
 	welcomeCommandName  = "WELCOME"
 	initiateCommandName = "INITIATE"
 	readyCommandName    = "READY"
-	messageCommandName  = "MESSAGE"
 	// errorCommandName is shared with NULL/PLAIN; we reference
 	// wire.ErrorCommandName directly rather than redeclare it.
 )
@@ -454,14 +453,14 @@ func encodeMessage(flags byte, payload []byte, sharedKey *SharedKey, prefix [16]
 		return wire.Command{}, fmt.Errorf("curve: internal: message-box len=%d want %d", len(out), len(plaintext)+16)
 	}
 	copy(body[8:], out)
-	return wire.Command{Name: messageCommandName, Data: body}, nil
+	return wire.Command{Name: wire.MessageCommandName, Data: body}, nil
 }
 
 // parseMessage opens a peer MESSAGE. prefix selects the direction
 // (caller-supplied; ClientState reads with messageServerPrefix,
 // ServerState reads with messageClientPrefix).
 func parseMessage(cmd wire.Command, sharedKey *SharedKey, prefix [16]byte) (byte, []byte, uint64, error) {
-	if cmd.Name != messageCommandName {
+	if cmd.Name != wire.MessageCommandName {
 		return 0, nil, 0, fmt.Errorf("%w: command name %q", ErrMalformedMessage, cmd.Name)
 	}
 	if len(cmd.Data) < messageMinBodyLen {

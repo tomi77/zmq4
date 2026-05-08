@@ -518,8 +518,8 @@ func TestEncodeMessageRoundTrip(t *testing.T) {
 			if err != nil {
 				t.Fatalf("encodeMessage: %v", err)
 			}
-			if cmd.Name != messageCommandName {
-				t.Fatalf("cmd.Name = %q, want %q", cmd.Name, messageCommandName)
+			if cmd.Name != wire.MessageCommandName {
+				t.Fatalf("cmd.Name = %q, want %q", cmd.Name, wire.MessageCommandName)
 			}
 			gotFlags, gotPayload, gotNonce, err := parseMessage(cmd, afterReadyServer, messageClientPrefix)
 			if err != nil {
@@ -550,7 +550,7 @@ func TestParseMessageRejectsWrongName(t *testing.T) {
 func TestParseMessageRejectsTooSmall(t *testing.T) {
 	_, sk := makePair(t)
 	shared := precompute(PublicKey{1}, &sk)
-	bad := wire.Command{Name: messageCommandName, Data: []byte{0x01}}
+	bad := wire.Command{Name: wire.MessageCommandName, Data: []byte{0x01}}
 	if _, _, _, err := parseMessage(bad, shared, messageClientPrefix); !errors.Is(err, ErrMalformedMessage) {
 		t.Fatalf("err = %v, want ErrMalformedMessage", err)
 	}
