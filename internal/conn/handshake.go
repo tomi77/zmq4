@@ -106,14 +106,14 @@ type nameAware interface {
 // returns one of: ErrInvalidGreeting, wire.ErrUnsupportedVersion,
 // ErrMechanismMismatch, ErrRoleConflict, or any I/O error wrapped.
 //
-// Asymmetric ordering (spec §6.1): the client sends its greeting
-// synchronously before reading, so the server always has data to
-// read. The server uses a fire-and-forget goroutine so that its
-// write does not block when the peer has already torn down its read
-// path (e.g. net.Pipe test helpers that write then exit). On TCP
-// loopback the 64-byte greeting fits in the kernel buffer so the
-// goroutine completes without blocking the peer's read.
-func greetingExchange(raw net.Conn, role greetingRole, mech nameAware) error {
+// For the server role the greeting write is queued in a goroutine
+// (same reason as before). The returned channel closes when that
+// goroutine's write finishes; callers that need to send further data
+// on the same net.Conn (e.g. a symmetric-mech READY command) MUST
+// wait on this channel before writing to preserve stream ordering on
+// zero-buffer transports such as net.Pipe. For the client role the
+// channel is nil (write already completed synchronously).
+func greetingExchange(raw net.Conn, role greetingRole, mech nameAware) (<-chan struct{}, error) {
 	ourGreeting := wire.Greeting{
 		Mechanism: mech.Name(),
 		AsServer:  role.asServer(),
@@ -124,19 +124,25 @@ func greetingExchange(raw net.Conn, role greetingRole, mech nameAware) error {
 	// (both connecting as server) and single-sided net.Pipe test helpers
 	// do not deadlock; write errors are swallowed since any real I/O
 	// failure surfaces on the read path below.
+	var greetingDone <-chan struct{}
 	if role == greetingRoleClient {
 		if err := wire.WriteGreeting(raw, ourGreeting); err != nil {
-			return err
+			return nil, err
 		}
 	} else {
-		go func() { _ = wire.WriteGreeting(raw, ourGreeting) }()
+		ch := make(chan struct{})
+		greetingDone = ch
+		go func() {
+			_ = wire.WriteGreeting(raw, ourGreeting)
+			close(ch)
+		}()
 	}
 
 	// Both sides: read peer's greeting.
 	if err := wire.ReadGreetingPhaseA(raw); err != nil {
 		// Wrap signature failure as ErrInvalidGreeting; pass through
 		// version-major failure (wire.ErrUnsupportedVersion).
-		return wrapPhaseA(err)
+		return nil, wrapPhaseA(err)
 	}
 	// Reconstruct the validated phase-A bytes for DecodeGreeting.
 	var buf [wire.GreetingSize]byte
@@ -147,23 +153,23 @@ func greetingExchange(raw net.Conn, role greetingRole, mech nameAware) error {
 		if err == io.EOF {
 			err = io.ErrUnexpectedEOF
 		}
-		return err
+		return nil, err
 	}
 	peerG, err := wire.DecodeGreeting(buf[:])
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if peerG.Mechanism != mech.Name() {
-		return errMechMismatch(mech.Name(), peerG.Mechanism)
+		return nil, errMechMismatch(mech.Name(), peerG.Mechanism)
 	}
 	if mech.Name() != "NULL" {
 		// Asymmetric mechanism: peer.AsServer must differ from ourSide.
 		if peerG.AsServer == role.asServer() {
-			return errRoleConflict(role.asServer(), peerG.AsServer)
+			return nil, errRoleConflict(role.asServer(), peerG.AsServer)
 		}
 	}
 
-	return nil
+	return greetingDone, nil
 }
 
 // wrapPhaseA classifies an error returned by ReadGreetingPhaseA. Bad
@@ -316,7 +322,8 @@ func doHandshake(ctx context.Context, raw net.Conn,
 	var c *Conn
 	err := runWithCtxDeadline(ctx, raw, func() error {
 		// 1. Greeting (lockstep, asymmetric send order).
-		if err := greetingExchange(raw, role, mech); err != nil {
+		greetingDone, err := greetingExchange(raw, role, mech)
+		if err != nil {
 			return err
 		}
 		// 2. Emit Start() if needed.
@@ -348,9 +355,13 @@ func doHandshake(ctx context.Context, raw net.Conn,
 			// loop. The goroutine uses a private FrameWriter so it never shares
 			// mutable FrameWriter state with fw; fw is reserved exclusively for
 			// the server goroutine (runHandshakeLoop / emitERROR). net.Conn is
-			// documented as safe for concurrent reads and writes, and in practice
-			// the goroutine's write completes before any emitERROR call on fw
-			// (the two writes do not actually interleave on the stream).
+			// documented as safe for concurrent reads and writes.
+			//
+			// greetingDone serialises this write after the greeting write on
+			// the same conn: on net.Pipe the two goroutine writes would otherwise
+			// interleave non-deterministically, sending the READY bytes before
+			// the greeting bytes and confusing the client (which reads 0x04
+			// instead of the expected 0xFF signature byte).
 			startCmd, err := cm.Start()
 			if err != nil {
 				return fmt.Errorf("%w: mech.Start: %v", ErrHandshakeFail, err)
@@ -360,6 +371,9 @@ func doHandshake(ctx context.Context, raw net.Conn,
 				return fmt.Errorf("%w: encode Start: %v", ErrHandshakeFail, err)
 			}
 			go func() {
+				if greetingDone != nil {
+					<-greetingDone
+				}
 				_ = wire.NewFrameWriter(raw).WriteFrame(wire.Frame{Kind: wire.FrameCommand, Body: body})
 			}()
 		}

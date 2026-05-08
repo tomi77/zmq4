@@ -149,11 +149,11 @@ func driveGreetingPair(t *testing.T, ourSide, peerSide greetingTestSide) (ourErr
 	ours := make(chan res, 1)
 	peer := make(chan res, 1)
 	go func() {
-		err := greetingExchange(a, ourSide.role, ourSide.mech)
+		_, err := greetingExchange(a, ourSide.role, ourSide.mech)
 		ours <- res{err}
 	}()
 	go func() {
-		err := greetingExchange(b, peerSide.role, peerSide.mech)
+		_, err := greetingExchange(b, peerSide.role, peerSide.mech)
 		peer <- res{err}
 	}()
 	return (<-ours).err, (<-peer).err
@@ -264,7 +264,7 @@ func TestGreetingFillerIgnored(t *testing.T) {
 		}
 		_, _ = b.Write(buf[:])
 	}()
-	if err := greetingExchange(a, greetingRoleServer, mockMech{"NULL"}); err != nil {
+	if _, err := greetingExchange(a, greetingRoleServer, mockMech{"NULL"}); err != nil {
 		t.Fatalf("greeting with garbage filler should be accepted, got %v", err)
 	}
 }
@@ -284,7 +284,7 @@ func TestGreetingPhaseAFailureAbortsBeforeRest(t *testing.T) {
 		bad[10] = 0x03
 		_, _ = b.Write(bad)
 	}()
-	err := greetingExchange(a, greetingRoleServer, mockMech{"NULL"})
+	_, err := greetingExchange(a, greetingRoleServer, mockMech{"NULL"})
 	if !errors.Is(err, ErrInvalidGreeting) && !errors.Is(err, wire.ErrInvalidSignature) {
 		t.Fatalf("err = %v, want ErrInvalidGreeting or wire.ErrInvalidSignature", err)
 	}
@@ -302,7 +302,7 @@ func TestGreetingVersionDowngradeAbortsBeforeRest(t *testing.T) {
 		bad[10] = 0x02
 		_, _ = b.Write(bad)
 	}()
-	err := greetingExchange(a, greetingRoleServer, mockMech{"NULL"})
+	_, err := greetingExchange(a, greetingRoleServer, mockMech{"NULL"})
 	if !errors.Is(err, wire.ErrUnsupportedVersion) {
 		t.Fatalf("err = %v, want wire.ErrUnsupportedVersion", err)
 	}
