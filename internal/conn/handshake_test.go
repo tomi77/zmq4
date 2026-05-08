@@ -311,3 +311,203 @@ var _ = []interface{ Name() string }{
 	(*null.State)(nil),
 	(*plain.ClientState)(nil),
 }
+
+// stubMech is a Mechanism+ClientMechanism mock that records calls and
+// returns scripted responses. Used to drive runHandshakeLoop without
+// pulling in real null/plain/curve states.
+type stubMech struct {
+	name             string
+	startCmd         wire.Command
+	startErr         error
+	receiveResponses []receiveResponse
+	receiveCallCount int
+	doneAfter        int
+	wrapPassthrough  bool
+}
+
+type receiveResponse struct {
+	out  *wire.Command
+	done bool
+	err  error
+}
+
+func (s *stubMech) Name() string { return s.name }
+
+func (s *stubMech) Start() (wire.Command, error) {
+	return s.startCmd, s.startErr
+}
+
+func (s *stubMech) Receive(_ wire.Command) (*wire.Command, bool, error) {
+	idx := s.receiveCallCount
+	s.receiveCallCount++
+	if idx >= len(s.receiveResponses) {
+		return nil, true, nil // default: done.
+	}
+	r := s.receiveResponses[idx]
+	return r.out, r.done, r.err
+}
+
+func (s *stubMech) Wrap(f wire.Frame) (wire.Frame, error)   { return f, nil }
+func (s *stubMech) Unwrap(f wire.Frame) (wire.Frame, error) { return f, nil }
+
+// Done always returns false. runHandshakeLoop never inspects mech.Done()
+// (it only acts on the `done` boolean returned from Receive), so this
+// is fine for unit tests. Returning a constant false avoids any subtle
+// interaction if a future test wires stubMech into a higher-level
+// driver that does poll Done().
+func (s *stubMech) Done() bool                  { return false }
+func (s *stubMech) PeerMetadata() wire.Metadata { return nil }
+
+// driveLoopPair runs runHandshakeLoop on both sides of a net.Pipe with
+// scripted stubMechs. The "active" side does Start() first; the
+// "passive" side just runs the loop.
+func runLoopPair(t *testing.T, active, passive *stubMech, cfg *config) (activeErr, passiveErr error) {
+	t.Helper()
+	a, b := net.Pipe()
+	defer a.Close()
+	defer b.Close()
+	type res struct{ err error }
+	ac := make(chan res, 1)
+	pc := make(chan res, 1)
+	go func() {
+		fw := wire.NewFrameWriter(a)
+		// Active side: emit Start() first.
+		startCmd, err := active.Start()
+		if err != nil {
+			ac <- res{err}
+			return
+		}
+		body, err := wire.EncodeCommand(startCmd)
+		if err != nil {
+			ac <- res{err}
+			return
+		}
+		_ = fw.WriteFrame(wire.Frame{Kind: wire.FrameCommand, Body: body})
+		ac <- res{runHandshakeLoop(a, fw, active, cfg)}
+	}()
+	go func() {
+		fw := wire.NewFrameWriter(b)
+		pc <- res{runHandshakeLoop(b, fw, passive, cfg)}
+	}()
+	return (<-ac).err, (<-pc).err
+}
+
+func TestRunHandshakeLoopUnexpectedFrame(t *testing.T) {
+	// Peer sends a FrameMessage during handshake → ErrUnexpectedFrame.
+	a, b := net.Pipe()
+	defer a.Close()
+	defer b.Close()
+	go func() {
+		fw := wire.NewFrameWriter(b)
+		_ = fw.WriteFrame(wire.Frame{Kind: wire.FrameMessage, Body: []byte("oops")})
+	}()
+	stub := &stubMech{name: "NULL"}
+	cfg := newConfig(nil)
+	fw := wire.NewFrameWriter(a)
+	err := runHandshakeLoop(a, fw, stub, cfg)
+	if !errors.Is(err, ErrUnexpectedFrame) {
+		t.Fatalf("err = %v, want ErrUnexpectedFrame", err)
+	}
+}
+
+func TestRunHandshakeLoopPeerERROR(t *testing.T) {
+	a, b := net.Pipe()
+	defer a.Close()
+	defer b.Close()
+	go func() {
+		fw := wire.NewFrameWriter(b)
+		ec, _ := wire.ErrorCommand{Reason: "no thanks"}.Encode()
+		body, _ := wire.EncodeCommand(ec)
+		_ = fw.WriteFrame(wire.Frame{Kind: wire.FrameCommand, Body: body})
+	}()
+	stub := &stubMech{name: "NULL"}
+	cfg := newConfig(nil)
+	fw := wire.NewFrameWriter(a)
+	err := runHandshakeLoop(a, fw, stub, cfg)
+	if !errors.Is(err, ErrHandshakeFail) {
+		t.Fatalf("err = %v, want wrap of ErrHandshakeFail", err)
+	}
+	if !strings.Contains(err.Error(), "no thanks") {
+		t.Fatalf("err message %q does not contain peer reason", err.Error())
+	}
+}
+
+func TestRunHandshakeLoopMechReceiveError(t *testing.T) {
+	a, b := net.Pipe()
+	defer a.Close()
+	defer b.Close()
+	// Peer sends a valid READY command.
+	go func() {
+		fw := wire.NewFrameWriter(b)
+		ready, _ := wire.EncodeCommand(wire.Command{Name: wire.ReadyCommandName, Data: nil})
+		_ = fw.WriteFrame(wire.Frame{Kind: wire.FrameCommand, Body: ready})
+		// Then read whatever ERROR we emit back.
+		fr := wire.NewFrameReader(b)
+		_, _ = fr.ReadFrame()
+	}()
+	stub := &stubMech{
+		name: "NULL",
+		receiveResponses: []receiveResponse{
+			{out: nil, done: false, err: errors.New("synthetic mech failure")},
+		},
+	}
+	cfg := newConfig(nil)
+	fw := wire.NewFrameWriter(a)
+	err := runHandshakeLoop(a, fw, stub, cfg)
+	if !errors.Is(err, ErrHandshakeFail) {
+		t.Fatalf("err = %v, want wrap of ErrHandshakeFail", err)
+	}
+	if !strings.Contains(err.Error(), "synthetic mech failure") {
+		t.Fatalf("err = %q, want to contain mech reason", err.Error())
+	}
+}
+
+func TestRunHandshakeLoopMetadataCap(t *testing.T) {
+	a, b := net.Pipe()
+	defer a.Close()
+	defer b.Close()
+	go func() {
+		fw := wire.NewFrameWriter(b)
+		// READY with 9 KiB of metadata-shaped bytes (cap is 8 KiB).
+		bigData := bytes.Repeat([]byte{0x00}, 9*1024)
+		body, _ := wire.EncodeCommand(wire.Command{Name: wire.ReadyCommandName, Data: bigData})
+		_ = fw.WriteFrame(wire.Frame{Kind: wire.FrameCommand, Body: body})
+		// Drain ERROR.
+		fr := wire.NewFrameReader(b)
+		_, _ = fr.ReadFrame()
+	}()
+	stub := &stubMech{name: "NULL"}
+	cfg := newConfig(nil) // 8 KiB metadata cap.
+	fw := wire.NewFrameWriter(a)
+	err := runHandshakeLoop(a, fw, stub, cfg)
+	if !errors.Is(err, ErrMetadataTooLarge) {
+		t.Fatalf("err = %v, want ErrMetadataTooLarge", err)
+	}
+}
+
+func TestRunHandshakeLoopCommandCap(t *testing.T) {
+	a, b := net.Pipe()
+	defer a.Close()
+	defer b.Close()
+	go func() {
+		// 65 KiB > default 64 KiB cap. We need only the header for the
+		// cap check to fire (FrameReader rejects before reading body),
+		// but writing the body too keeps the wire well-formed if the
+		// implementation ever changes to drain.
+		oversize := bytes.Repeat([]byte{0x42}, 65*1024)
+		// Flags byte: long-form command frame = (cmd|long) = 0x04|0x02 = 0x06.
+		_, _ = b.Write([]byte{0x06})
+		// 8-byte big-endian size for 65*1024 = 66560 = 0x10400 →
+		// {0x00,0x00,0x00,0x00,0x00,0x01,0x04,0x00}.
+		sz := [8]byte{0, 0, 0, 0, 0, 0x01, 0x04, 0x00}
+		_, _ = b.Write(sz[:])
+		_, _ = b.Write(oversize)
+	}()
+	stub := &stubMech{name: "NULL"}
+	cfg := newConfig(nil)
+	fw := wire.NewFrameWriter(a)
+	err := runHandshakeLoop(a, fw, stub, cfg)
+	if !errors.Is(err, ErrCommandTooLarge) {
+		t.Fatalf("err = %v, want ErrCommandTooLarge", err)
+	}
+}

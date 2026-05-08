@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tomi77/zmq4/internal/security"
 	"github.com/tomi77/zmq4/internal/wire"
 )
 
@@ -177,4 +178,93 @@ func errMechMismatch(ours, theirs string) error {
 
 func errRoleConflict(ours, theirs bool) error {
 	return fmt.Errorf("%w: ours=%t peer=%t", ErrRoleConflict, ours, theirs)
+}
+
+// runHandshakeLoop drives mech.Receive against frames read from raw
+// until mech.Done() — or an error. Used by both ClientHandshake (after
+// emitting Start()'s command) and ServerHandshake.
+//
+// Per spec §6.2:
+//   - reads via a transient FrameReader capped at cfg.maxHandshakeCommandSize;
+//   - rejects FrameMessage as ErrUnexpectedFrame;
+//   - parses the command body; on parse error, returns wrapped
+//     ErrHandshakeFail (and does NOT emit ERROR back — peer is already
+//     malformed);
+//   - on peer ERROR, returns wrapped ErrHandshakeFail with the reason;
+//   - enforces metadata cap on READY/INITIATE commands; on overflow,
+//     emits ERROR and returns ErrMetadataTooLarge;
+//   - on mech.Receive error, emits ERROR and returns wrapped
+//     ErrHandshakeFail.
+//
+// fw is the shared FrameWriter on raw (also used by emitERROR for
+// abort signalling). mech is the local Mechanism (already constructed
+// and, for the active side, already had Start() called by the caller).
+func runHandshakeLoop(raw net.Conn, fw *wire.FrameWriter, mech security.Mechanism, cfg *config) error {
+	hsfr := wire.NewFrameReader(raw, wire.WithMaxBodySize(int64(cfg.maxHandshakeCommandSize)))
+	for {
+		f, err := hsfr.ReadFrame()
+		if err != nil {
+			switch {
+			case errors.Is(err, wire.ErrFrameTooLarge):
+				return fmt.Errorf("%w: %v", ErrCommandTooLarge, err)
+			case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+				return fmt.Errorf("%w: peer closed mid-handshake: %v", ErrHandshakeFail, err)
+			default:
+				return err
+			}
+		}
+		if f.Kind != wire.FrameCommand {
+			return fmt.Errorf("%w: got Kind=%v", ErrUnexpectedFrame, f.Kind)
+		}
+		cmd, err := wire.ParseCommand(f.Body)
+		if err != nil {
+			return fmt.Errorf("%w: parse: %v", ErrHandshakeFail, err)
+		}
+		if cmd.Name == wire.ErrorCommandName {
+			ec, perr := wire.ParseError(cmd)
+			if perr != nil {
+				return fmt.Errorf("%w: malformed peer ERROR: %v", ErrHandshakeFail, perr)
+			}
+			return fmt.Errorf("%w: peer ERROR: %s", ErrHandshakeFail, ec.Reason)
+		}
+		if isMetadataBearing(cmd.Name) && len(cmd.Data) > cfg.maxMetadataSize {
+			emitERROR(fw, "metadata exceeds cap")
+			return fmt.Errorf("%w: %s body=%dB cap=%dB",
+				ErrMetadataTooLarge, cmd.Name, len(cmd.Data), cfg.maxMetadataSize)
+		}
+		out, done, err := mech.Receive(cmd)
+		if err != nil {
+			emitERROR(fw, err.Error())
+			return fmt.Errorf("%w: mech.Receive: %v", ErrHandshakeFail, err)
+		}
+		if out != nil {
+			body, err := wire.EncodeCommand(*out)
+			if err != nil {
+				return fmt.Errorf("%w: encode mech out: %v", ErrHandshakeFail, err)
+			}
+			if err := fw.WriteFrame(wire.Frame{Kind: wire.FrameCommand, Body: body}); err != nil {
+				return err
+			}
+		}
+		if done {
+			return nil
+		}
+	}
+}
+
+// isMetadataBearing reports whether a handshake command body parses as
+// metadata properties. The metadata cap applies only to these.
+//
+// READY (NULL/PLAIN/CURVE) and INITIATE (PLAIN/CURVE) carry metadata;
+// HELLO and WELCOME do not (they have mechanism-specific bodies). For
+// CURVE, INITIATE's body is encrypted (cookie + vouch box + sealed
+// metadata), so the cap acts as a wire-level allocation bound rather
+// than a plaintext-size limit. See spec §6.2.
+func isMetadataBearing(name string) bool {
+	switch name {
+	case wire.ReadyCommandName, "INITIATE":
+		return true
+	default:
+		return false
+	}
 }
