@@ -341,8 +341,16 @@ func doHandshake(ctx context.Context, raw net.Conn,
 			}
 		} else if cm, ok := mech.(security.ClientMechanism); ok {
 			// Symmetric mechanism on the server side (NULL): fire Start() in a
-			// goroutine. Write errors are swallowed — any real I/O failure
-			// surfaces on the read path in runHandshakeLoop below.
+			// goroutine. A goroutine is required because both peers initiate
+			// simultaneously on a synchronous transport (net.Pipe): the server
+			// cannot write before the client reads, and the client cannot read
+			// before it finishes its own synchronous write and enters its receive
+			// loop. The goroutine uses a private FrameWriter so it never shares
+			// mutable FrameWriter state with fw; fw is reserved exclusively for
+			// the server goroutine (runHandshakeLoop / emitERROR). net.Conn is
+			// documented as safe for concurrent reads and writes, and in practice
+			// the goroutine's write completes before any emitERROR call on fw
+			// (the two writes do not actually interleave on the stream).
 			startCmd, err := cm.Start()
 			if err != nil {
 				return fmt.Errorf("%w: mech.Start: %v", ErrHandshakeFail, err)
@@ -352,7 +360,7 @@ func doHandshake(ctx context.Context, raw net.Conn,
 				return fmt.Errorf("%w: encode Start: %v", ErrHandshakeFail, err)
 			}
 			go func() {
-				_ = fw.WriteFrame(wire.Frame{Kind: wire.FrameCommand, Body: body})
+				_ = wire.NewFrameWriter(raw).WriteFrame(wire.Frame{Kind: wire.FrameCommand, Body: body})
 			}()
 		}
 		// 3. Drive the loop.
