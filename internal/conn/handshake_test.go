@@ -323,8 +323,6 @@ type stubMech struct {
 	startErr         error
 	receiveResponses []receiveResponse
 	receiveCallCount int
-	doneAfter        int
-	wrapPassthrough  bool
 }
 
 type receiveResponse struct {
@@ -360,38 +358,6 @@ func (s *stubMech) Unwrap(f wire.Frame) (wire.Frame, error) { return f, nil }
 func (s *stubMech) Done() bool                  { return false }
 func (s *stubMech) PeerMetadata() wire.Metadata { return nil }
 
-// runLoopPair is defined here for use in Task 14 (ClientHandshake /
-// ServerHandshake constructor tests). No Task 13 test calls it directly.
-func runLoopPair(t *testing.T, active, passive *stubMech, cfg *config) (activeErr, passiveErr error) {
-	t.Helper()
-	a, b := net.Pipe()
-	defer a.Close()
-	defer b.Close()
-	type res struct{ err error }
-	ac := make(chan res, 1)
-	pc := make(chan res, 1)
-	go func() {
-		fw := wire.NewFrameWriter(a)
-		// Active side: emit Start() first.
-		startCmd, err := active.Start()
-		if err != nil {
-			ac <- res{err}
-			return
-		}
-		body, err := wire.EncodeCommand(startCmd)
-		if err != nil {
-			ac <- res{err}
-			return
-		}
-		_ = fw.WriteFrame(wire.Frame{Kind: wire.FrameCommand, Body: body})
-		ac <- res{runHandshakeLoop(a, fw, active, cfg)}
-	}()
-	go func() {
-		fw := wire.NewFrameWriter(b)
-		pc <- res{runHandshakeLoop(b, fw, passive, cfg)}
-	}()
-	return (<-ac).err, (<-pc).err
-}
 
 func TestRunHandshakeLoopUnexpectedFrame(t *testing.T) {
 	// Peer sends a FrameMessage during handshake → ErrUnexpectedFrame.
