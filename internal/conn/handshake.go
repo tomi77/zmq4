@@ -389,7 +389,7 @@ func doHandshake(ctx context.Context, raw net.Conn,
 		}
 		// 3. Drive the loop.
 		if err := runHandshakeLoop(raw, fw, mech, cfg); err != nil {
-			return err
+			return err // readyWritten goroutine is unblocked by raw.Close() in the error path
 		}
 		// Wait for the server's READY goroutine to finish writing before
 		// returning. Without this barrier, a caller that closes the conn
