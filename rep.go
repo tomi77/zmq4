@@ -77,31 +77,22 @@ func (s *REP) Send(ctx context.Context, msg Message) error {
 	s.mu.Unlock()
 
 	// Send envelope frames (all with More=true), then payload frames.
-	// On any write failure after the first frame has been sent, the ZMTP
-	// stream is corrupt — close the connection to prevent the peer from
-	// waiting for frames that will never arrive.
-	wroteAny := false
+	// On any write failure the ZMTP stream is corrupt — always close the
+	// connection to prevent the peer from waiting for frames that will
+	// never arrive. Closing an already-closed connection is safe (idempotent).
 	for _, ef := range env {
-		err := p.conn.WriteFrame(wire.Frame{
+		if err := p.conn.WriteFrame(wire.Frame{
 			Kind: wire.FrameMessage,
 			More: true,
 			Body: ef,
-		})
-		if err != nil {
-			if wroteAny {
-				p.conn.Close()
-			}
+		}); err != nil {
+			p.conn.Close()
 			return err
 		}
-		wroteAny = true
 	}
 
 	if err := sendFrames(p.conn, msg); err != nil {
-		// Partial write: ZMTP stream is corrupt. Close the connection
-		// to prevent the peer from waiting for frames that will never arrive.
-		if wroteAny || len(env) > 0 {
-			p.conn.Close()
-		}
+		p.conn.Close()
 		return err
 	}
 	return nil
@@ -114,14 +105,22 @@ func (s *REP) Close() error {
 
 // splitEnvelope splits a raw message into (envelope, payload).
 // The envelope is all frames up to and including the first empty-body frame
-// (the delimiter). If no empty frame is found (DEALER→REP path without delimiter),
-// envelope is nil and all frames are treated as payload (per spec §9.7 resolution).
+// (the delimiter). The delimiter frame (empty body) is included as the last
+// element of the returned envelope. If no empty frame is found (DEALER→REP
+// path without delimiter), envelope is nil and all frames are treated as
+// payload (per spec §9.7 resolution).
 func splitEnvelope(msg Message) (envelope [][]byte, payload Message) {
 	for i, part := range msg {
 		if len(part) == 0 {
-			return msg[:i+1], msg[i+1:]
+			// Copy slice headers so envelope and payload do not share the
+			// backing array of msg; prevents a caller append to payload from
+			// silently corrupting envelope frames.
+			env := append([][]byte(nil), msg[:i+1]...)
+			pay := append(Message(nil), msg[i+1:]...)
+			return env, pay
 		}
 	}
 	// No delimiter found — DEALER peer; treat all frames as payload.
+	// msg is caller-owned (readLoop allocates each frame independently).
 	return nil, msg
 }
