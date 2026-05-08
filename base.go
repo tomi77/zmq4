@@ -227,12 +227,3 @@ func (sb *socketBase) sendWaitPipe(ctx context.Context) (*pipe, error) {
 	}
 }
 
-// isClosing reports whether the socket is closed or closing.
-func (sb *socketBase) isClosing() bool {
-	select {
-	case <-sb.closeCh:
-		return true
-	default:
-		return false
-	}
-}

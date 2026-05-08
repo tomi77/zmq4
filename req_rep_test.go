@@ -76,7 +76,7 @@ func TestREQREPMultiRoundTrips(t *testing.T) {
 	}
 	t.Cleanup(func() { req.Close() })
 
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		send := zmq4.Message{[]byte{byte(i)}}
 		if err := req.Send(ctx, send); err != nil {
 			t.Fatalf("round %d Send: %v", i, err)

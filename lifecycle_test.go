@@ -16,11 +16,9 @@ func TestCloseUnblocksRecv(t *testing.T) {
 
 	var wg sync.WaitGroup
 	var recvErr error
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		_, recvErr = dealer.Recv(ctx)
-	}()
+	})
 
 	time.Sleep(10 * time.Millisecond) // let goroutine block
 	dealer.Close()
@@ -36,11 +34,9 @@ func TestCloseUnblocksSend(t *testing.T) {
 
 	var wg sync.WaitGroup
 	var sendErr error
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		sendErr = dealer.Send(ctx, zmq4.Message{[]byte("x")})
-	}()
+	})
 
 	time.Sleep(10 * time.Millisecond)
 	dealer.Close()
