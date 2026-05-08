@@ -38,23 +38,35 @@ func (s *REQ) Send(ctx context.Context, msg Message) error {
 		s.mu.Unlock()
 		return fmt.Errorf("%w: REQ must Recv before sending again", ErrState)
 	}
+	s.sent = true // claim the slot atomically before releasing the lock
 	s.mu.Unlock()
 
 	p, err := s.base.sendWaitPipe(ctx)
 	if err != nil {
+		s.mu.Lock()
+		s.sent = false
+		s.mu.Unlock()
 		return err
 	}
 
 	// Send empty delimiter then payload.
 	if err := p.conn.WriteFrame(emptyDelimiter); err != nil {
+		s.mu.Lock()
+		s.sent = false
+		s.mu.Unlock()
 		return err
 	}
 	if err := sendFrames(p.conn, msg); err != nil {
+		// Partial write: ZMTP stream is corrupt. Close the connection
+		// to prevent the peer from waiting for a frame that will never arrive.
+		p.conn.Close()
+		s.mu.Lock()
+		s.sent = false
+		s.mu.Unlock()
 		return err
 	}
 
 	s.mu.Lock()
-	s.sent = true
 	s.activePipe = p
 	s.mu.Unlock()
 	return nil
@@ -83,8 +95,13 @@ func (s *REQ) Recv(ctx context.Context) (Message, error) {
 		}
 		raw = msg
 	case <-ctx.Done():
+		s.mu.Lock()
+		s.sent = false
+		s.activePipe = nil
+		s.mu.Unlock()
 		return nil, ctx.Err()
 	case <-s.base.closeCh:
+		// Socket is closed — don't bother resetting state.
 		return nil, ErrClosed
 	}
 
