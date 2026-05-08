@@ -341,6 +341,13 @@ func TestNullUnwrapPassthrough(t *testing.T) {
 	}
 }
 
+func TestStateName(t *testing.T) {
+	s := New(nil)
+	if got := s.Name(); got != "NULL" {
+		t.Fatalf("Name() = %q, want %q", got, "NULL")
+	}
+}
+
 // newDoneState drives the NULL handshake to completion using a paired
 // peer-side State so the test does not have to hand-craft READY bytes.
 // Helper for the Wrap/Unwrap tests above.
