@@ -33,7 +33,10 @@ func (p *pipe) start(ps *pipeSet, closeCh <-chan struct{}) {
 	go p.readLoop(ps, closeCh)
 }
 
-// readLoop reads multipart messages from the conn and delivers them to inCh.
+// readLoop reads multipart messages from the conn and delivers them to
+// inCh. Exits when conn.ReadFrame returns an error (including net.ErrClosed
+// after socket.Close) or closeCh is closed. A partially-assembled multipart
+// message in progress is discarded on exit.
 func (p *pipe) readLoop(ps *pipeSet, closeCh <-chan struct{}) {
 	defer p.wg.Done()
 	defer close(p.inCh)
@@ -84,6 +87,9 @@ func (ps *pipeSet) remove(p *pipe) {
 	for i, q := range ps.pipes {
 		if q == p {
 			ps.pipes = append(ps.pipes[:i], ps.pipes[i+1:]...)
+			if i < ps.robin {
+				ps.robin--
+			}
 			if ps.robin >= len(ps.pipes) {
 				ps.robin = 0
 			}

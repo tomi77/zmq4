@@ -37,11 +37,16 @@ func TestPipeSetNext(t *testing.T) {
 	ps.add(p1)
 	ps.add(p2)
 	// Two calls must each return a non-nil pipe (round-robin)
-	if ps.next() == nil {
+	a := ps.next()
+	b := ps.next()
+	if a == nil {
 		t.Fatal("next: got nil on non-empty pipeSet")
 	}
-	if ps.next() == nil {
+	if b == nil {
 		t.Fatal("next (2nd): got nil on non-empty pipeSet")
+	}
+	if a == b {
+		t.Fatal("next: expected round-robin to return different pipes")
 	}
 }
 
