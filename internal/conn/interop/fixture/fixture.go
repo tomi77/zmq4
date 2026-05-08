@@ -83,6 +83,9 @@ type Peer struct {
 
 	stdoutBuf *strings.Builder
 	stdoutMu  sync.Mutex
+
+	waitOnce sync.Once
+	waitErr  error
 }
 
 // Start launches the libzmq bridge container with spec piped to stdin.
@@ -167,11 +170,21 @@ func Start(t *testing.T, spec Spec) *Peer {
 		p.ResolvedEndpoint = ep
 	case <-time.After(15 * time.Second):
 		_ = cmd.Process.Kill()
-		t.Fatalf("libzmq bridge did not signal READY within 15 s; stdout: %s", p.stdoutBuf.String())
+		p.stdoutMu.Lock()
+		out := p.stdoutBuf.String()
+		p.stdoutMu.Unlock()
+		t.Fatalf("libzmq bridge did not signal READY within 15 s; stdout: %s", out)
 	}
 
 	t.Cleanup(func() { p.Stop() })
 	return p
+}
+
+// doWait calls cmd.Wait exactly once (sync.Once) and caches the result.
+// Prevents double-Wait when both Wait() and Stop() are called.
+func (p *Peer) doWait() error {
+	p.waitOnce.Do(func() { p.waitErr = p.cmd.Wait() })
+	return p.waitErr
 }
 
 // Wait blocks until the bridge exits and returns its exit error (nil
@@ -181,7 +194,7 @@ func Start(t *testing.T, spec Spec) *Peer {
 func (p *Peer) Wait(t *testing.T, timeout time.Duration) {
 	t.Helper()
 	done := make(chan error, 1)
-	go func() { done <- p.cmd.Wait() }()
+	go func() { done <- p.doWait() }()
 	select {
 	case err := <-done:
 		if err != nil {
@@ -191,8 +204,10 @@ func (p *Peer) Wait(t *testing.T, timeout time.Duration) {
 			t.Fatalf("libzmq bridge exited with error: %v; stdout: %s", err, out)
 		}
 	case <-time.After(timeout):
-		t.Fatalf("libzmq bridge did not exit within %v; stdout: %s",
-			timeout, p.stdoutBuf.String())
+		p.stdoutMu.Lock()
+		out := p.stdoutBuf.String()
+		p.stdoutMu.Unlock()
+		t.Fatalf("libzmq bridge did not exit within %v; stdout: %s", timeout, out)
 	}
 }
 
@@ -202,7 +217,7 @@ func (p *Peer) Stop() {
 		return
 	}
 	_ = p.cmd.Process.Kill()
-	_ = p.cmd.Wait()
+	_ = p.doWait()
 }
 
 // Stdout returns the accumulated stdout for diagnostics.
@@ -233,8 +248,8 @@ func EnsureDockerImage(t *testing.T) {
 	t.Logf("zmq4-interop-bridge:latest not present (%s); building", strings.TrimSpace(string(out)))
 	build := exec.Command("docker", "build",
 		"-t", "zmq4-interop-bridge:latest",
-		"-f", "../Dockerfile",
-		"../bridge")
+		"-f", "Dockerfile",
+		"bridge")
 	out, err = build.CombinedOutput()
 	if err != nil {
 		t.Skipf("cannot build interop image: %v\n%s", err, out)

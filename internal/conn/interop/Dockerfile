@@ -1,7 +1,6 @@
 # Pinned libzmq for F4 interop. ZeroMQ 4.3.x is the LTS line.
-# pyzmq wheels for arm64/amd64 ship with their own embedded libzmq —
-# we install libzmq via the distro package to keep one source of truth
-# and force pyzmq to bind against it via PYZMQ_BACKEND=cython.
+# pyzmq prebuilt wheels bundle their own libzmq; --no-binary forces a
+# source build that links against the pinned system libzmq5=4.3.4.
 
 FROM python:3.12-slim-bookworm
 
@@ -13,9 +12,8 @@ RUN apt-get update \
         gcc \
  && rm -rf /var/lib/apt/lists/*
 
-# Build pyzmq against the system libzmq (not the bundled wheel).
-ENV PYZMQ_BACKEND_CYTHON=1
-RUN pip install --no-cache-dir 'pyzmq==25.*'
+# --no-binary pyzmq: build from source so pkg-config picks up system libzmq.
+RUN pip install --no-cache-dir --no-binary pyzmq 'pyzmq==25.*'
 
 WORKDIR /bridge
 COPY bridge.py /bridge/bridge.py
