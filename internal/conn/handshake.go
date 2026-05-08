@@ -75,6 +75,11 @@ func runWithCtxDeadline(ctx context.Context, raw net.Conn, fn func() error) erro
 	return err
 }
 
+// initiateCommandName is the ZMTP INITIATE command name. Duplicated from
+// plain/codec.go and curve/codec.go because the wire package does not
+// export it. Replace with wire.InitiateCommandName if wire ever adds it.
+const initiateCommandName = "INITIATE"
+
 // greetingRole tags the local side of a greeting exchange. Clients send
 // synchronously before reading; servers queue their send in a goroutine
 // and read immediately. The role also determines as-server for
@@ -262,7 +267,7 @@ func runHandshakeLoop(raw net.Conn, fw *wire.FrameWriter, mech security.Mechanis
 // than a plaintext-size limit. See spec §6.2.
 func isMetadataBearing(name string) bool {
 	switch name {
-	case wire.ReadyCommandName, "INITIATE":
+	case wire.ReadyCommandName, initiateCommandName:
 		return true
 	default:
 		return false

@@ -358,9 +358,8 @@ func (s *stubMech) Unwrap(f wire.Frame) (wire.Frame, error) { return f, nil }
 func (s *stubMech) Done() bool                  { return false }
 func (s *stubMech) PeerMetadata() wire.Metadata { return nil }
 
-// driveLoopPair runs runHandshakeLoop on both sides of a net.Pipe with
-// scripted stubMechs. The "active" side does Start() first; the
-// "passive" side just runs the loop.
+// runLoopPair is defined here for use in Task 14 (ClientHandshake /
+// ServerHandshake constructor tests). No Task 13 test calls it directly.
 func runLoopPair(t *testing.T, active, passive *stubMech, cfg *config) (activeErr, passiveErr error) {
 	t.Helper()
 	a, b := net.Pipe()
