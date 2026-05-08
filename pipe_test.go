@@ -1,0 +1,77 @@
+package zmq4
+
+import (
+	"net"
+	"testing"
+)
+
+func TestPipeSetAddRemove(t *testing.T) {
+	ps := newPipeSet()
+	if ps.len() != 0 {
+		t.Fatalf("want 0 pipes, got %d", ps.len())
+	}
+
+	c1, c2 := net.Pipe()
+	defer c1.Close()
+	defer c2.Close()
+
+	p := newPipe(nil, nil) // conn can be nil for structural tests
+	ps.add(p)
+	if ps.len() != 1 {
+		t.Fatalf("after add: want 1, got %d", ps.len())
+	}
+	ps.remove(p)
+	if ps.len() != 0 {
+		t.Fatalf("after remove: want 0, got %d", ps.len())
+	}
+	_ = c2
+}
+
+func TestPipeSetNext(t *testing.T) {
+	ps := newPipeSet()
+	if got := ps.next(); got != nil {
+		t.Fatalf("next on empty: got %v, want nil", got)
+	}
+	p1 := newPipe(nil, nil)
+	p2 := newPipe(nil, nil)
+	ps.add(p1)
+	ps.add(p2)
+	// Two calls must each return a non-nil pipe (round-robin)
+	if ps.next() == nil {
+		t.Fatal("next: got nil on non-empty pipeSet")
+	}
+	if ps.next() == nil {
+		t.Fatal("next (2nd): got nil on non-empty pipeSet")
+	}
+}
+
+func TestPipeSetByIdentity(t *testing.T) {
+	ps := newPipeSet()
+	id := []byte("abc")
+	p := newPipe(nil, id)
+	ps.add(p)
+
+	got := ps.byIdentity(id)
+	if got != p {
+		t.Fatalf("byIdentity: got %v, want %v", got, p)
+	}
+	if ps.byIdentity([]byte("zzz")) != nil {
+		t.Fatal("byIdentity unknown: expected nil")
+	}
+}
+
+func TestPipeSetAddedNotification(t *testing.T) {
+	ps := newPipeSet()
+	added := ps.currentAdded()
+
+	// adding a pipe must close the channel
+	p := newPipe(nil, nil)
+	ps.add(p)
+
+	select {
+	case <-added:
+		// OK — channel was closed
+	default:
+		t.Fatal("added channel not closed after add")
+	}
+}
