@@ -59,7 +59,7 @@ is enforced by package boundaries (`internal/...`).
 
 ```
                  ┌──────────────────────────────────────────┐
-   public API   │  socket/   (REQ/REP/PUB/SUB/PUSH/PULL/…)  │  F5
+   public API   │  zmq4/     (REQ/REP/PUB/SUB/PUSH/PULL/…)  │  F5
                  └─────────────────────┬────────────────────┘
                                        │
                  ┌─────────────────────▼────────────────────┐
@@ -87,7 +87,7 @@ is enforced by package boundaries (`internal/...`).
 | L2 | `internal/security` | NULL/PLAIN/CURVE handshake state machines. Pure logic. | All of `net`, goroutines, time. |
 | L3 | `internal/transport` | Listener / dialer abstractions for `tcp`/`ipc`/`inproc`. | wire, security, socket |
 | L4 | `internal/conn` | Connection lifecycle: drives wire+security on top of transport. | socket |
-| L5 | `socket` | Socket-type semantics, public API surface. | — |
+| L5 | `zmq4` (root package) | Socket-type semantics, public API surface. The implementation lives in the module root rather than a `socket/` subdirectory — a single import is idiomatic Go and no other package in this module needs to import L5. | — |
 | L6 | `zap` | ZAP authentication protocol over `inproc`. | socket |
 
 Anything that would require `cgo` is forbidden across all layers.
@@ -111,7 +111,7 @@ deferred until all three concrete implementations exist (extracted in F2c).
 | F2c | `02c-security-curve.md` | CURVE handshake state machine + post-handshake `Wrap`/`Unwrap` (MESSAGE encryption). **No I/O.** Extracts the shared `Mechanism` / `ClientMechanism` interfaces across F2a/F2b/F2c. Adds `nacl/box` + `nacl/secretbox` as the project's first non-stdlib dependency. | Same shape as F2a, plus crypto vectors under a deterministic seeded RNG. | **Complete** — tagged `phase-2c-curve-complete`. |
 | F3 | `03-transports.md` | `tcp`, `ipc`, `inproc` listener/dialer abstractions. | Self-loopback tests (our dialer ↔ our listener). | **Complete** — tagged `phase-3-transport-complete`. |
 | F4 | `04-connection-layer.md` | Wire-up of F1+F2+F3. Handshake, frame stream, error handling. | **First live interop with `libzmq`** (NULL handshake, then PLAIN, then CURVE). | **Complete** — tagged `phase-4-conn-complete`. ZMTP-version-downgrade interop deferred (pyzmq cannot force ZMTP 3.0); covered by unit test on net.Pipe. |
-| F5a | `05a-sockets-reqrep.md` | `REQ`, `REP`, `ROUTER`, `DEALER`. | Interop with `libzmq` REQ/REP patterns. | Pending. |
+| F5a | `05a-sockets-reqrep.md` | `REQ`, `REP`, `ROUTER`, `DEALER`. | Interop with `libzmq` REQ/REP patterns. | **Design approved, implementation pending.** |
 | F5b | `05b-sockets-pubsub.md` | `PUB`, `SUB`, `XPUB`, `XSUB`. Topic filtering. | Interop with `libzmq` pub/sub patterns. | Pending. |
 | F5c | `05c-sockets-pipeline-pair.md` | `PUSH`, `PULL`, `PAIR`. | Interop with `libzmq` pipeline/pair. | Pending. |
 | F6 | `06-zap-monitoring.md` | ZAP auth, socket monitoring events, HWM tuning, polling. | Interop and full integration. | Pending. |
