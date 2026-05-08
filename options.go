@@ -1,6 +1,7 @@
 package zmq4
 
 import (
+	"slices"
 	"time"
 
 	"github.com/tomi77/zmq4/internal/security"
@@ -35,8 +36,8 @@ func (cfg *socketConfig) localMeta(socketType string) map[string]string {
 }
 
 // toWireMetadata converts a map[string]string to wire.Metadata, placing
-// Socket-Type first (as required by ZMTP) and then remaining keys in
-// iteration order.
+// Socket-Type first (as required by ZMTP) and then remaining keys sorted
+// alphabetically to ensure deterministic ordering.
 func toWireMetadata(m map[string]string) wire.Metadata {
 	md := make(wire.Metadata, 0, len(m))
 	// Socket-Type first per convention.
@@ -46,16 +47,28 @@ func toWireMetadata(m map[string]string) wire.Metadata {
 			Value: []byte(v),
 		})
 	}
+	// Collect remaining keys and sort them for deterministic output.
+	rest := make([]wire.MetadataProperty, 0, len(m)-1)
 	for k, v := range m {
 		if k == "Socket-Type" {
 			continue
 		}
-		md = append(md, wire.MetadataProperty{
+		rest = append(rest, wire.MetadataProperty{
 			Name:  []byte(k),
 			Value: []byte(v),
 		})
 	}
-	return md
+	slices.SortFunc(rest, func(a, b wire.MetadataProperty) int {
+		switch {
+		case string(a.Name) < string(b.Name):
+			return -1
+		case string(a.Name) > string(b.Name):
+			return 1
+		default:
+			return 0
+		}
+	})
+	return append(md, rest...)
 }
 
 // Option configures a socket at construction time.

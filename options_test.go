@@ -1,8 +1,11 @@
 package zmq4
 
 import (
+	"errors"
 	"testing"
 	"time"
+
+	"github.com/tomi77/zmq4/internal/security/plain"
 )
 
 func TestNewSocketConfigDefaults(t *testing.T) {
@@ -62,5 +65,22 @@ func TestWithIdentityAppearsInMeta(t *testing.T) {
 	meta := cfg.localMeta("REQ")
 	if got := meta["Identity"]; got != "myid" {
 		t.Fatalf("Identity in meta: got %q, want %q", got, "myid")
+	}
+}
+
+func TestWithPLAINServerMechMismatch(t *testing.T) {
+	cfg := newSocketConfig([]Option{WithPLAIN("u", "p")})
+	_, err := cfg.serverMechFactory("REQ")
+	if !errors.Is(err, ErrSecurityMismatch) {
+		t.Fatalf("want ErrSecurityMismatch, got %v", err)
+	}
+}
+
+func TestWithPLAINClientMechMismatch(t *testing.T) {
+	auth := plain.Authenticator(func(user, pass []byte) error { return nil })
+	cfg := newSocketConfig([]Option{WithPLAINServer(auth)})
+	_, err := cfg.clientMechFactory("REQ")
+	if !errors.Is(err, ErrSecurityMismatch) {
+		t.Fatalf("want ErrSecurityMismatch, got %v", err)
 	}
 }
