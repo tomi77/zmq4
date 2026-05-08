@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/tomi77/zmq4/internal/security"
 	"github.com/tomi77/zmq4/internal/security/null"
@@ -327,4 +328,118 @@ func TestPostHandshakeWriteFrameConcurrent(t *testing.T) {
 			t.Errorf("missing payload byte %d", i)
 		}
 	}
+}
+
+func TestPostHandshakeMultipart(t *testing.T) {
+	c, s, cErr, sErr := runHandshakePair(t,
+		func() security.ClientMechanism { return null.New(nil) },
+		func() security.Mechanism { return null.New(nil) })
+	if cErr != nil || sErr != nil {
+		t.Fatalf("handshake: cErr=%v sErr=%v", cErr, sErr)
+	}
+	frames := []wire.Frame{
+		{Kind: wire.FrameMessage, More: true, Body: []byte("part1")},
+		{Kind: wire.FrameMessage, More: true, Body: []byte("part2")},
+		{Kind: wire.FrameMessage, More: false, Body: []byte("part3")},
+	}
+	go func() {
+		for _, f := range frames {
+			if err := c.WriteFrame(f); err != nil {
+				t.Errorf("WriteFrame: %v", err)
+				return
+			}
+		}
+	}()
+	for i, want := range frames {
+		got, err := s.ReadFrame()
+		if err != nil {
+			t.Fatalf("ReadFrame[%d]: %v", i, err)
+		}
+		if got.More != want.More {
+			t.Errorf("frame %d: More = %v, want %v", i, got.More, want.More)
+		}
+		if !bytes.Equal(got.Body, want.Body) {
+			t.Errorf("frame %d: body = %q, want %q", i, got.Body, want.Body)
+		}
+	}
+}
+
+func TestPostHandshakeCloseUnblocksRead(t *testing.T) {
+	c, _, cErr, sErr := runHandshakePair(t,
+		func() security.ClientMechanism { return null.New(nil) },
+		func() security.Mechanism { return null.New(nil) })
+	if cErr != nil || sErr != nil {
+		t.Fatalf("handshake: cErr=%v sErr=%v", cErr, sErr)
+	}
+	readDone := make(chan error, 1)
+	go func() {
+		_, err := c.ReadFrame()
+		readDone <- err
+	}()
+	// Give the reader a moment to enter the blocking syscall.
+	time.Sleep(20 * time.Millisecond)
+	if err := c.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	select {
+	case err := <-readDone:
+		if err == nil {
+			t.Fatalf("ReadFrame returned nil after Close; want error")
+		}
+		if !errors.Is(err, net.ErrClosed) && !errors.Is(err, io.ErrClosedPipe) {
+			t.Errorf("err = %v, want net.ErrClosed or io.ErrClosedPipe", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("ReadFrame did not unblock within 500 ms after Close")
+	}
+}
+
+func TestPostHandshakeReadAfterClose(t *testing.T) {
+	c, _, cErr, sErr := runHandshakePair(t,
+		func() security.ClientMechanism { return null.New(nil) },
+		func() security.Mechanism { return null.New(nil) })
+	if cErr != nil || sErr != nil {
+		t.Fatalf("handshake: cErr=%v sErr=%v", cErr, sErr)
+	}
+	if err := c.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	_, err := c.ReadFrame()
+	if err == nil {
+		t.Fatalf("ReadFrame after Close: nil, want error")
+	}
+	if !errors.Is(err, net.ErrClosed) && !errors.Is(err, io.ErrClosedPipe) {
+		t.Errorf("err = %v, want net.ErrClosed or io.ErrClosedPipe", err)
+	}
+}
+
+func TestPostHandshakeRaceDetectorClean(t *testing.T) {
+	// Full round-trip + concurrent writes + Close. Run with -race in CI.
+	c, s, cErr, sErr := runHandshakePair(t,
+		func() security.ClientMechanism { return null.New(nil) },
+		func() security.Mechanism { return null.New(nil) })
+	if cErr != nil || sErr != nil {
+		t.Fatalf("handshake: cErr=%v sErr=%v", cErr, sErr)
+	}
+	const N = 25
+	var wg sync.WaitGroup
+	wg.Add(N + 1)
+	go func() {
+		defer wg.Done()
+		for range N {
+			if _, err := s.ReadFrame(); err != nil {
+				return
+			}
+		}
+	}()
+	for i := range N {
+		i := i
+		go func() {
+			defer wg.Done()
+			_ = c.WriteFrame(wire.Frame{Kind: wire.FrameMessage, Body: []byte{byte(i)}})
+		}()
+	}
+	wg.Wait()
+	_ = c.Close()
+	_ = s.Close()
 }
