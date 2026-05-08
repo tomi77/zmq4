@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -65,7 +66,14 @@ func runIntegRow(t *testing.T, row integRow) {
 	case "tcp":
 		ep = fmt.Sprintf("tcp://127.0.0.1:%d", freePort(t))
 	case "ipc":
-		ep = "ipc://" + filepath.Join(t.TempDir(), row.security+"-"+row.pair+".sock")
+		// Use /tmp directly: t.TempDir() produces paths >104 chars on macOS,
+		// exceeding the Unix socket path limit.
+		dir, err := os.MkdirTemp("/tmp", "zmq4i")
+		if err != nil {
+			t.Fatalf("MkdirTemp: %v", err)
+		}
+		t.Cleanup(func() { os.RemoveAll(dir) })
+		ep = "ipc://" + filepath.Join(dir, "s.sock")
 	case "inproc":
 		ep = "inproc://integ-" + row.transport + "-" + row.security + "-" + row.pair
 	default:
@@ -106,14 +114,17 @@ func securityOpts(t *testing.T, security string) (serverOpts, clientOpts []zmq4.
 		if err != nil {
 			t.Fatalf("curve.GenerateKeyPair (server): %v", err)
 		}
-		defer serverSec.Zero()
+		// Cleanup at test end, not at securityOpts return: the secret key
+		// is kept alive via pointer in curve.ServerOptions until the test
+		// completes; defer would zero it before the connection uses it.
+		t.Cleanup(serverSec.Zero)
 
 		// Generate client long-term keypair.
 		clientPub, clientSec, err := curve.GenerateKeyPair(nil)
 		if err != nil {
 			t.Fatalf("curve.GenerateKeyPair (client): %v", err)
 		}
-		defer clientSec.Zero()
+		t.Cleanup(clientSec.Zero)
 
 		// Authorizer: accept any client (key-pinning is out of scope here).
 		authorizer := curve.Authorizer(func(_ curve.PublicKey, _ wire.Metadata) error {
