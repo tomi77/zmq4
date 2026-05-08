@@ -610,6 +610,16 @@ Candidates worth flagging if they appear:
 - Whether `Authenticator` should receive a third parameter (e.g. peer
   identity, transport context). Deferred until F6 says it needs one.
 
+## 9. F4 amendments
+
+Additive change landed after `phase-2b-plain-complete` was tagged.
+Frozen tag remains valid (additive on frozen surface).
+
+- `(*ClientState).Name() string` and `(*ServerState).Name() string`
+  both return `"PLAIN"`. Required by the extended `security.Mechanism`
+  interface — F4 needs the wire mechanism name for greeting
+  population and peer validation.
+
 ## 10. References
 
 - [RFC 37/ZMTP 3.1](https://rfc.zeromq.org/spec/37/) §3 (Security

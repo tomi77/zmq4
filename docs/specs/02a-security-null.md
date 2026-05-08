@@ -299,6 +299,16 @@ equality. Cross-validation against libzmq is deferred to F4 interop.
 
 None at draft time. Will be revisited if any surface during implementation.
 
+## 9. F4 amendments
+
+Additive change landed after `phase-2a-null-complete` was tagged.
+Frozen tag remains valid (additive on frozen surface).
+
+- `(*State).Name() string` returns `"NULL"`. Required by the extended
+  `security.Mechanism` interface — F4 (connection layer) needs the
+  wire mechanism name to populate the ZMTP greeting and to validate
+  the peer-advertised mechanism matches.
+
 ## 10. References
 
 - [RFC 37/ZMTP 3.1](https://rfc.zeromq.org/spec/37/) §3 (Security

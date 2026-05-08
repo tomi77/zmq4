@@ -547,7 +547,28 @@ Phase 1 is "done" when:
 
 The package is then frozen until F4 needs to consume it; bug fixes only.
 
-## 13. References
+## 13. F4 amendments
+
+Additive changes landed after `phase-1-wire-complete` was tagged. None
+break the tagged API; they extend it. Tracked here (rather than
+re-tagged) so the original phase boundary stays intact.
+
+- `MessageCommandName = "MESSAGE"` constant added to `internal/wire`.
+  Symmetric with `ReadyCommandName`, `ErrorCommandName`,
+  `PingCommandName`, etc. F4 (`internal/conn`) and F2c
+  (`internal/security/curve`) now reference the wire constant instead
+  of using string literals or shadow constants.
+
+- `ReadGreetingPhaseA(io.Reader) error` helper added to
+  `internal/wire`. Reads and validates the first 11 bytes of a ZMTP
+  3.1 greeting (signature 10 B + version major 1 B). On signature
+  failure → `ErrInvalidSignature`; on `version major != 0x03` →
+  `ErrUnsupportedVersion`; truncated input → `io.ErrUnexpectedEOF`.
+  `ReadGreeting` was refactored to call this helper for the first 11
+  bytes, then read the remaining 53 bytes inline. F4 uses the helper
+  directly to short-circuit lockstep handshake on phase-A failure.
+
+## 14. References
 
 - [RFC 37/ZMTP 3.1](https://rfc.zeromq.org/spec/37/) — primary reference.
 - [RFC 23/ZMTP 3.0](https://rfc.zeromq.org/spec/23/) — predecessor;
