@@ -28,6 +28,7 @@ Output (newline-delimited):
 
 import json
 import sys
+import time
 import zmq
 
 
@@ -37,6 +38,10 @@ SOCKET_TYPES = {
     "REP":    zmq.REP,
     "DEALER": zmq.DEALER,
     "ROUTER": zmq.ROUTER,
+    "PUB":    zmq.PUB,
+    "SUB":    zmq.SUB,
+    "XPUB":   zmq.XPUB,
+    "XSUB":   zmq.XSUB,
 }
 
 
@@ -85,6 +90,44 @@ def run_scenario(sock: zmq.Socket, scenario: str, socket_type: str) -> None:
         # recv_multipart gives [identity, ...frames]; send_multipart echoes back.
         frames = sock.recv_multipart()
         sock.send_multipart(frames)
+        return
+
+    if socket_type == "PUB":
+        # PUB: wait briefly for subscriptions to propagate, then send.
+        time.sleep(0.1)
+        if scenario == "single":
+            sock.send(b"INTEROP")
+        elif scenario == "multipart":
+            sock.send_multipart([b"INTEROP", b"INTEROP_P1", b"INTEROP_P2"])
+        else:
+            raise ValueError(f"unknown scenario {scenario!r}")
+        return
+
+    if socket_type in ("SUB", "XSUB"):
+        # SUB/XSUB: subscribe to all, then receive one message.
+        sock.setsockopt(zmq.SUBSCRIBE, b"")
+        if scenario == "single":
+            sock.recv()
+        elif scenario == "multipart":
+            sock.recv_multipart()
+        else:
+            raise ValueError(f"unknown scenario {scenario!r}")
+        return
+
+    if socket_type == "XPUB":
+        # XPUB: wait briefly for subscriptions, drain subscription frames, then send.
+        time.sleep(0.1)
+        # Drain any pending subscription frames with a short poll.
+        poller = zmq.Poller()
+        poller.register(sock, zmq.POLLIN)
+        while poller.poll(timeout=50):
+            sock.recv()  # consume subscription frame
+        if scenario == "single":
+            sock.send(b"INTEROP")
+        elif scenario == "multipart":
+            sock.send_multipart([b"INTEROP", b"INTEROP_P1", b"INTEROP_P2"])
+        else:
+            raise ValueError(f"unknown scenario {scenario!r}")
         return
 
     # PAIR, REP: passive echo.

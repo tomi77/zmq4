@@ -46,7 +46,7 @@ type interopRow struct {
 func buildMatrix() []interopRow {
 	var rows []interopRow
 	for _, dir := range []fixture.Role{fixture.RoleDialer, fixture.RoleListener} {
-		for _, pair := range []string{"reqrep", "dealerrouter"} {
+		for _, pair := range []string{"reqrep", "dealerrouter", "pubsub", "xpubxsub"} {
 			for _, mech := range []fixture.Mechanism{fixture.MechNULL, fixture.MechPLAIN, fixture.MechCURVE} {
 				for _, scheme := range []string{"tcp", "ipc"} {
 					for _, sc := range []fixture.Scenario{fixture.ScenarioSingle, fixture.ScenarioMultipart} {
@@ -56,7 +56,7 @@ func buildMatrix() []interopRow {
 			}
 		}
 	}
-	return rows // 2×2×3×2×2 = 48
+	return rows // 2×4×3×2×2 = 96
 }
 
 // goSocketType returns the Go socket type and the bridge socket type for a row.
@@ -77,6 +77,14 @@ func socketTypeNames(row interopRow) (goType, bridgeType string) {
 		return "DEALER", "ROUTER"
 	case "dealerrouter+listener":
 		return "ROUTER", "DEALER"
+	case "pubsub+dialer":
+		return "SUB", "PUB" // Go=SUB dials, bridge=PUB listens
+	case "pubsub+listener":
+		return "PUB", "SUB" // Go=PUB listens, bridge=SUB dials
+	case "xpubxsub+dialer":
+		return "XSUB", "XPUB" // Go=XSUB dials, bridge=XPUB listens
+	case "xpubxsub+listener":
+		return "XPUB", "XSUB" // Go=XPUB listens, bridge=XSUB dials
 	}
 	panic("unhandled pair+dir: " + row.pair + "+" + string(row.dir))
 }
@@ -262,6 +270,14 @@ func runGoSocket(t *testing.T, ctx context.Context, row interopRow, ep string, o
 		runGoDEALER(t, ctx, ep, opts, row.scenario, dial)
 	case "ROUTER":
 		runGoROUTER(t, ctx, ep, opts, row.scenario, dial)
+	case "PUB":
+		runGoPUB(t, ctx, ep, opts, row.scenario, dial)
+	case "SUB":
+		runGoSUB(t, ctx, ep, opts, row.scenario, dial)
+	case "XPUB":
+		runGoXPUB(t, ctx, ep, opts, row.scenario, dial)
+	case "XSUB":
+		runGoXSUB(t, ctx, ep, opts, row.scenario, dial)
 	}
 	_ = peer
 }
@@ -375,6 +391,116 @@ func runGoROUTER(t *testing.T, ctx context.Context, ep string, opts goOpts, sc f
 	}
 	if err := router.Send(ctx, rmsg); err != nil {
 		t.Fatalf("ROUTER.Send: %v", err)
+	}
+}
+
+func runGoPUB(t *testing.T, ctx context.Context, ep string, opts goOpts, sc fixture.Scenario, dial bool) {
+	t.Helper()
+	pub := zmq4.NewPUB(opts.serverOpts...)
+	defer pub.Close()
+
+	if dial {
+		if err := pub.Connect(ctx, ep); err != nil {
+			t.Fatalf("PUB.Connect: %v", err)
+		}
+	} else {
+		if err := pub.Bind(ctx, ep); err != nil {
+			t.Fatalf("PUB.Bind: %v", err)
+		}
+	}
+
+	// Wait for subscriptions to propagate before sending.
+	time.Sleep(150 * time.Millisecond)
+
+	payload := testPayload(sc)
+	if err := pub.Send(ctx, payload); err != nil {
+		t.Fatalf("PUB.Send: %v", err)
+	}
+}
+
+func runGoSUB(t *testing.T, ctx context.Context, ep string, opts goOpts, sc fixture.Scenario, dial bool) {
+	t.Helper()
+	sub := zmq4.NewSUB(opts.clientOpts...)
+	defer sub.Close()
+
+	if dial {
+		if err := sub.Connect(ctx, ep); err != nil {
+			t.Fatalf("SUB.Connect: %v", err)
+		}
+	} else {
+		if err := sub.Bind(ctx, ep); err != nil {
+			t.Fatalf("SUB.Bind: %v", err)
+		}
+	}
+
+	// Subscribe to all messages.
+	if err := sub.Subscribe(nil); err != nil {
+		t.Fatalf("SUB.Subscribe: %v", err)
+	}
+
+	got, err := sub.Recv(ctx)
+	if err != nil {
+		t.Fatalf("SUB.Recv: %v", err)
+	}
+	if len(got) == 0 {
+		t.Fatal("SUB.Recv: got empty message")
+	}
+}
+
+func runGoXPUB(t *testing.T, ctx context.Context, ep string, opts goOpts, sc fixture.Scenario, dial bool) {
+	t.Helper()
+	xpub := zmq4.NewXPUB(opts.serverOpts...)
+	defer xpub.Close()
+
+	if dial {
+		if err := xpub.Connect(ctx, ep); err != nil {
+			t.Fatalf("XPUB.Connect: %v", err)
+		}
+	} else {
+		if err := xpub.Bind(ctx, ep); err != nil {
+			t.Fatalf("XPUB.Bind: %v", err)
+		}
+	}
+
+	// Wait for and consume subscription frame from peer.
+	subCtx, subCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer subCancel()
+	if _, err := xpub.Recv(subCtx); err != nil {
+		t.Fatalf("XPUB.Recv subscription: %v", err)
+	}
+
+	payload := testPayload(sc)
+	if err := xpub.Send(ctx, payload); err != nil {
+		t.Fatalf("XPUB.Send: %v", err)
+	}
+}
+
+func runGoXSUB(t *testing.T, ctx context.Context, ep string, opts goOpts, sc fixture.Scenario, dial bool) {
+	t.Helper()
+	xsub := zmq4.NewXSUB(opts.clientOpts...)
+	defer xsub.Close()
+
+	if dial {
+		if err := xsub.Connect(ctx, ep); err != nil {
+			t.Fatalf("XSUB.Connect: %v", err)
+		}
+	} else {
+		if err := xsub.Bind(ctx, ep); err != nil {
+			t.Fatalf("XSUB.Bind: %v", err)
+		}
+	}
+
+	// Subscribe to all messages.
+	if err := xsub.Subscribe(nil); err != nil {
+		t.Fatalf("XSUB.Subscribe: %v", err)
+	}
+
+	got, err := xsub.Recv(ctx)
+	if err != nil {
+		t.Fatalf("XSUB.Recv: %v", err)
+	}
+	if len(got) == 0 {
+		t.Fatal("XSUB.Recv: got empty message")
 	}
 }
 
