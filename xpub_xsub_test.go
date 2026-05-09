@@ -136,3 +136,111 @@ func TestXPUBCtxCancelRecv(t *testing.T) {
 		t.Fatalf("want context.Canceled, got %v", err)
 	}
 }
+
+func TestXSUBSendForwarding(t *testing.T) {
+	ep := xpubEP(t)
+	ctx := xCtx(t)
+
+	xpub := zmq4.NewXPUB()
+	if err := xpub.Bind(ctx, ep); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { xpub.Close() })
+
+	xsub := zmq4.NewXSUB()
+	if err := xsub.Connect(ctx, ep); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { xsub.Close() })
+
+	// Send raw subscription frame via XSUB.Send.
+	rawSub := zmq4.Message{[]byte("\x01myTopic")}
+	if err := xsub.Send(ctx, rawSub); err != nil {
+		t.Fatalf("XSUB Send: %v", err)
+	}
+
+	got, err := xpub.Recv(ctx)
+	if err != nil {
+		t.Fatalf("XPUB Recv: %v", err)
+	}
+	if got[0][0] != 0x01 || string(got[0][1:]) != "myTopic" {
+		t.Fatalf("XPUB got unexpected frame: %v", got[0])
+	}
+}
+
+func TestProxyPattern(t *testing.T) {
+	// PUB → XSUB → (proxy goroutine) → XPUB → SUB
+	ctx := xCtx(t)
+
+	pubEP := "inproc://proxy_pub_" + strings.ReplaceAll(t.Name(), "/", "_")
+	subEP := "inproc://proxy_sub_" + strings.ReplaceAll(t.Name(), "/", "_")
+
+	pub := zmq4.NewPUB()
+	if err := pub.Bind(ctx, pubEP); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pub.Close() })
+
+	xsub := zmq4.NewXSUB()
+	if err := xsub.Connect(ctx, pubEP); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { xsub.Close() })
+
+	xpub := zmq4.NewXPUB()
+	if err := xpub.Bind(ctx, subEP); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { xpub.Close() })
+
+	sub := zmq4.NewSUB()
+	if err := sub.Connect(ctx, subEP); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { sub.Close() })
+
+	sub.Subscribe([]byte("data"))
+
+	// Proxy: XPUB→XSUB (subscriptions) and XSUB→XPUB (data).
+	go func() {
+		for {
+			msg, err := xpub.Recv(ctx)
+			if err != nil {
+				return
+			}
+			xsub.Send(ctx, msg)
+		}
+	}()
+	go func() {
+		for {
+			msg, err := xsub.Recv(ctx)
+			if err != nil {
+				return
+			}
+			xpub.Send(ctx, msg)
+		}
+	}()
+
+	time.Sleep(30 * time.Millisecond) // let subscription propagate through proxy
+
+	pub.Send(ctx, zmq4.Message{[]byte("data-msg")})
+
+	got, err := sub.Recv(ctx)
+	if err != nil {
+		t.Fatalf("SUB Recv: %v", err)
+	}
+	if string(got[0]) != "data-msg" {
+		t.Fatalf("want data-msg, got %q", got[0])
+	}
+}
+
+func TestXSUBCtxCancelRecv(t *testing.T) {
+	xsub := zmq4.NewXSUB()
+	t.Cleanup(func() { xsub.Close() })
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := xsub.Recv(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("want context.Canceled, got %v", err)
+	}
+}
