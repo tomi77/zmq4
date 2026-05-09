@@ -164,3 +164,105 @@ func TestIncompatiblePeerPUBtoREP(t *testing.T) {
 		t.Fatalf("want ErrIncompatiblePeer for PUB→REP, got %v", err)
 	}
 }
+
+func TestPUSHCloseUnblocksSend(t *testing.T) {
+	push := zmq4.NewPUSH() // no peers
+	ctx := context.Background()
+
+	var wg sync.WaitGroup
+	var sendErr error
+	wg.Go(func() {
+		sendErr = push.Send(ctx, zmq4.Message{[]byte("x")})
+	})
+
+	time.Sleep(10 * time.Millisecond)
+	push.Close()
+	wg.Wait()
+	if !errors.Is(sendErr, zmq4.ErrClosed) {
+		t.Fatalf("want ErrClosed, got %v", sendErr)
+	}
+}
+
+func TestPULLCloseUnblocksRecv(t *testing.T) {
+	pull := zmq4.NewPULL()
+	ctx := context.Background()
+
+	var wg sync.WaitGroup
+	var recvErr error
+	wg.Go(func() {
+		_, recvErr = pull.Recv(ctx)
+	})
+
+	time.Sleep(10 * time.Millisecond)
+	pull.Close()
+	wg.Wait()
+	if !errors.Is(recvErr, zmq4.ErrClosed) {
+		t.Fatalf("want ErrClosed, got %v", recvErr)
+	}
+}
+
+func TestPAIRCloseUnblocksSend(t *testing.T) {
+	pair := zmq4.NewPAIR() // no peer
+	ctx := context.Background()
+
+	var wg sync.WaitGroup
+	var sendErr error
+	wg.Go(func() {
+		sendErr = pair.Send(ctx, zmq4.Message{[]byte("x")})
+	})
+
+	time.Sleep(10 * time.Millisecond)
+	pair.Close()
+	wg.Wait()
+	if !errors.Is(sendErr, zmq4.ErrClosed) {
+		t.Fatalf("want ErrClosed, got %v", sendErr)
+	}
+}
+
+func TestPAIRCloseUnblocksRecv(t *testing.T) {
+	pair := zmq4.NewPAIR()
+	ctx := context.Background()
+
+	var wg sync.WaitGroup
+	var recvErr error
+	wg.Go(func() {
+		_, recvErr = pair.Recv(ctx)
+	})
+
+	time.Sleep(10 * time.Millisecond)
+	pair.Close()
+	wg.Wait()
+	if !errors.Is(recvErr, zmq4.ErrClosed) {
+		t.Fatalf("want ErrClosed, got %v", recvErr)
+	}
+}
+
+func TestPUSHCloseIdempotent(t *testing.T) {
+	push := zmq4.NewPUSH()
+	if err := push.Close(); err != nil {
+		t.Fatalf("first Close: %v", err)
+	}
+	if err := push.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
+}
+
+func TestPULLCloseIdempotent(t *testing.T) {
+	pull := zmq4.NewPULL()
+	if err := pull.Close(); err != nil {
+		t.Fatalf("first Close: %v", err)
+	}
+	if err := pull.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
+}
+
+func TestPAIRCloseIdempotent(t *testing.T) {
+	pair := zmq4.NewPAIR()
+	if err := pair.Close(); err != nil {
+		t.Fatalf("first Close: %v", err)
+	}
+	if err := pair.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
+}
