@@ -35,14 +35,14 @@ func freePort(t *testing.T) int {
 type integRow struct {
 	transport string // "tcp", "ipc", "inproc"
 	security  string // "null", "plain", "curve"
-	pair      string // "reqrep", "dealerrouter"
+	pair      string // "reqrep", "dealerrouter", "pubsub", "xpubxsub"
 }
 
 func TestIntegration(t *testing.T) {
 	var rows []integRow
 	for _, tr := range []string{"tcp", "ipc", "inproc"} {
 		for _, sec := range []string{"null", "plain", "curve"} {
-			for _, pair := range []string{"reqrep", "dealerrouter"} {
+			for _, pair := range []string{"reqrep", "dealerrouter", "pubsub", "xpubxsub"} {
 				rows = append(rows, integRow{tr, sec, pair})
 			}
 		}
@@ -87,6 +87,10 @@ func runIntegRow(t *testing.T, row integRow) {
 		runREQREP(t, ctx, ep, serverOpts, clientOpts)
 	case "dealerrouter":
 		runDEALERROUTER(t, ctx, ep, serverOpts, clientOpts)
+	case "pubsub":
+		runPUBSUB(t, ctx, ep, serverOpts, clientOpts)
+	case "xpubxsub":
+		runXPUBXSUB(t, ctx, ep, serverOpts, clientOpts)
 	default:
 		t.Fatalf("unknown pair %q", row.pair)
 	}
@@ -221,5 +225,77 @@ func runDEALERROUTER(t *testing.T, ctx context.Context, ep string, serverOpts, c
 	}
 	if len(dreply) == 0 || string(dreply[0]) != "there" {
 		t.Fatalf("want there, got %q", dreply)
+	}
+}
+
+func runPUBSUB(t *testing.T, ctx context.Context, ep string, serverOpts, clientOpts []zmq4.Option) {
+	t.Helper()
+	pub := zmq4.NewPUB(serverOpts...)
+	if err := pub.Bind(ctx, ep); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	defer pub.Close()
+
+	sub := zmq4.NewSUB(clientOpts...)
+	if err := sub.Connect(ctx, ep); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer sub.Close()
+
+	if err := sub.Subscribe([]byte("ping")); err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	time.Sleep(20 * time.Millisecond)
+
+	if err := pub.Send(ctx, zmq4.Message{[]byte("ping-payload")}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	got, err := sub.Recv(ctx)
+	if err != nil {
+		t.Fatalf("Recv: %v", err)
+	}
+	if string(got[0]) != "ping-payload" {
+		t.Fatalf("want ping-payload, got %q", got[0])
+	}
+}
+
+func runXPUBXSUB(t *testing.T, ctx context.Context, ep string, serverOpts, clientOpts []zmq4.Option) {
+	t.Helper()
+	xpub := zmq4.NewXPUB(serverOpts...)
+	if err := xpub.Bind(ctx, ep); err != nil {
+		t.Fatalf("Bind: %v", err)
+	}
+	defer xpub.Close()
+
+	xsub := zmq4.NewXSUB(clientOpts...)
+	if err := xsub.Connect(ctx, ep); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer xsub.Close()
+
+	if err := xsub.Subscribe([]byte("news")); err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+
+	// XPUB sees the subscription frame.
+	subMsg, err := xpub.Recv(ctx)
+	if err != nil {
+		t.Fatalf("XPUB Recv sub: %v", err)
+	}
+	if len(subMsg) == 0 || subMsg[0][0] != 0x01 {
+		t.Fatalf("XPUB: expected subscribe frame, got %v", subMsg)
+	}
+
+	time.Sleep(10 * time.Millisecond)
+
+	if err := xpub.Send(ctx, zmq4.Message{[]byte("news-item")}); err != nil {
+		t.Fatalf("XPUB Send: %v", err)
+	}
+	got, err := xsub.Recv(ctx)
+	if err != nil {
+		t.Fatalf("XSUB Recv: %v", err)
+	}
+	if string(got[0]) != "news-item" {
+		t.Fatalf("want news-item, got %q", got[0])
 	}
 }
