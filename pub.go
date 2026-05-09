@@ -35,11 +35,11 @@ func newPubPipe(c *conn.Conn, subNotify chan<- Message) *pubPipe {
 
 func (pp *pubPipe) start(ps *pubPipeSet, closeCh <-chan struct{}) {
 	pp.wg.Add(2)
-	go pp.subReader(ps, closeCh)
+	go pp.subReader(ps)
 	go pp.writer(closeCh)
 }
 
-func (pp *pubPipe) subReader(ps *pubPipeSet, closeCh <-chan struct{}) {
+func (pp *pubPipe) subReader(ps *pubPipeSet) {
 	defer pp.wg.Done()
 	defer ps.remove(pp)
 	for {
