@@ -22,6 +22,12 @@ var (
 	_ security.ClientMechanism = (*null.State)(nil)
 	_ security.ClientMechanism = (*plain.ClientState)(nil)
 	_ security.ClientMechanism = (*curve.ClientState)(nil)
+	_ security.ZAPConfigurer   = (*null.State)(nil)
+	_ security.ZAPConfigurer   = (*plain.ServerState)(nil)
+	_ security.ZAPConfigurer   = (*curve.ServerState)(nil)
+	_ security.PeerAddrSetter  = (*null.State)(nil)
+	_ security.PeerAddrSetter  = (*plain.ServerState)(nil)
+	_ security.PeerAddrSetter  = (*curve.ServerState)(nil)
 )
 
 // TestMechanismInterfaceCompilesForAllTypes runs the compile-time
