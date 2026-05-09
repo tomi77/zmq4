@@ -18,6 +18,12 @@ type ServerState struct {
 	helloProcessed bool
 	done           bool
 	failed         bool
+
+	// ZAP — set by ConfigureZAP; only used on the server side.
+	zap      security.ZAPCaller
+	domain   string
+	peerAddr string
+	zapMeta  wire.Metadata
 }
 
 // Authenticator decides whether to accept a (username, password) pair.
@@ -36,12 +42,29 @@ func NewServer(auth Authenticator, localMetadata wire.Metadata) *ServerState {
 	return &ServerState{auth: auth, local: localMetadata}
 }
 
+// ConfigureZAP injects a ZAP client and domain. Satisfies security.ZAPConfigurer.
+func (s *ServerState) ConfigureZAP(caller security.ZAPCaller, domain string) {
+	s.zap = caller
+	s.domain = domain
+}
+
+// SetPeerAddr stores the peer's network address for ZAP requests.
+// Satisfies security.PeerAddrSetter.
+func (s *ServerState) SetPeerAddr(addr string) { s.peerAddr = addr }
+
 // Done reports whether the handshake has completed successfully.
 func (s *ServerState) Done() bool { return s.done && !s.failed }
 
-// PeerMetadata returns the metadata the client sent in INITIATE. Valid
-// only after Receive returned done=true.
-func (s *ServerState) PeerMetadata() wire.Metadata { return s.peer }
+// PeerMetadata returns the peer's READY metadata merged with any ZAP reply
+// metadata. Valid only after Receive returned done=true.
+// The returned slice is owned by the State; callers MUST NOT mutate it.
+func (s *ServerState) PeerMetadata() wire.Metadata {
+	if len(s.zapMeta) == 0 {
+		return s.peer
+	}
+	merged := seccommon.CloneMetadata(s.peer)
+	return append(merged, s.zapMeta...)
+}
 
 // Wrap returns f unchanged. PLAIN does no traffic encapsulation.
 // Returns security.ErrNotDone if called before the handshake completes.
@@ -84,7 +107,16 @@ func (s *ServerState) Receive(cmd wire.Command) (out *wire.Command, done bool, e
 				s.failed = true
 				return nil, false, perr
 			}
-			if authErr := s.auth(body.Username, body.Password); authErr != nil {
+			if s.zap != nil {
+				code, _, zapMeta, zapErr := s.zap.Authenticate(
+					s.domain, s.peerAddr, "", "PLAIN",
+					[][]byte{body.Username, body.Password},
+				)
+				if zapErr != nil || code != "200" {
+					return s.failZAPDenied(code)
+				}
+				s.zapMeta = zapMeta
+			} else if authErr := s.auth(body.Username, body.Password); authErr != nil {
 				return s.failAuthRejected(authErr)
 			}
 			welcome := encodeWelcome()
@@ -131,6 +163,16 @@ func (s *ServerState) failAuthRejected(authErr error) (*wire.Command, bool, erro
 		return nil, false, fmt.Errorf("plain: encode ERROR: %w", encErr)
 	}
 	return &errCmd, false, fmt.Errorf("%w: %s", ErrAuthRejected, reason)
+}
+
+func (s *ServerState) failZAPDenied(statusCode string) (*wire.Command, bool, error) {
+	s.failed = true
+	reason := seccommon.SanitizeReason("ZAP " + statusCode)
+	errCmd, encErr := wire.ErrorCommand{Reason: reason}.Encode()
+	if encErr != nil {
+		return nil, false, fmt.Errorf("plain: encode ERROR: %w", encErr)
+	}
+	return &errCmd, false, fmt.Errorf("%w: status %s", security.ErrZAPDenied, statusCode)
 }
 
 func (s *ServerState) failPeerError(cmd wire.Command) error {

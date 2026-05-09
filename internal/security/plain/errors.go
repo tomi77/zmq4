@@ -1,6 +1,10 @@
 package plain
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/tomi77/zmq4/internal/security"
+)
 
 var (
 	// ErrCredentialsTooLong is returned by NewClient when username or
@@ -51,3 +55,7 @@ var (
 	// wire.ParseMetadata.
 	ErrMalformedReady = errors.New("plain: malformed READY")
 )
+
+// ErrZAPDenied is returned by ServerState.Receive when the ZAP handler rejects
+// the connection. Alias of security.ErrZAPDenied.
+var ErrZAPDenied = security.ErrZAPDenied

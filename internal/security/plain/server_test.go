@@ -320,6 +320,20 @@ func TestServerStateName(t *testing.T) {
 	}
 }
 
+func encodeHelloForTest(t *testing.T, username, password []byte) wire.Command {
+	t.Helper()
+	cmd, err := encodeHello(helloBody{Username: username, Password: password})
+	if err != nil {
+		t.Fatalf("encodeHello: %v", err)
+	}
+	return cmd
+}
+
+func encodeInitiateForTest(t *testing.T, md wire.Metadata) wire.Command {
+	t.Helper()
+	return wire.Command{Name: initiateCommandName, Data: wire.EncodeMetadata(md)}
+}
+
 func newPlainServerDone(t *testing.T) *ServerState {
 	t.Helper()
 	s := NewServer(acceptAll, nil)
@@ -335,4 +349,91 @@ func newPlainServerDone(t *testing.T) *ServerState {
 		t.Fatalf("not done")
 	}
 	return s
+}
+
+// --- ZAP tests ---
+
+type mockZAP struct {
+	code string
+	meta wire.Metadata
+	err  error
+}
+
+func (m *mockZAP) Authenticate(domain, address, identity, mechanism string, credentials [][]byte) (string, string, wire.Metadata, error) {
+	return m.code, "", m.meta, m.err
+}
+
+func alwaysAllow(username, password []byte) error { return nil }
+func alwaysDeny(username, password []byte) error  { return errors.New("denied") }
+
+func TestPlainServerZAPAllowOverridesLocalCallback(t *testing.T) {
+	// ZAP "200" — local deny callback is NOT called (ZAP takes precedence).
+	s := NewServer(alwaysDeny, nil)
+	s.ConfigureZAP(&mockZAP{code: "200"}, "dom")
+	s.SetPeerAddr("1.2.3.4:1")
+
+	hello := encodeHelloForTest(t, []byte("user"), []byte("pass"))
+	out, done, err := s.Receive(hello)
+	if err != nil {
+		t.Fatalf("Receive: unexpected error %v", err)
+	}
+	if done {
+		t.Fatal("done = true after HELLO, want false")
+	}
+	if out == nil || out.Name != welcomeCommandName {
+		t.Fatalf("out.Name = %q, want WELCOME", out.Name)
+	}
+}
+
+func TestPlainServerZAPDenySends400(t *testing.T) {
+	s := NewServer(alwaysAllow, nil)
+	s.ConfigureZAP(&mockZAP{code: "400"}, "dom")
+	s.SetPeerAddr("1.2.3.4:1")
+
+	hello := encodeHelloForTest(t, []byte("user"), []byte("pass"))
+	out, done, err := s.Receive(hello)
+	if !errors.Is(err, security.ErrZAPDenied) {
+		t.Fatalf("err = %v, want ErrZAPDenied", err)
+	}
+	if done {
+		t.Fatal("done = true, want false")
+	}
+	if out == nil || out.Name != wire.ErrorCommandName {
+		t.Fatalf("out.Name = %q, want ERROR", out.Name)
+	}
+}
+
+func TestPlainServerZAPMetadataMerge(t *testing.T) {
+	zapMeta := wire.Metadata{
+		{Name: []byte("X-Tenant"), Value: []byte("acme")},
+	}
+	s := NewServer(alwaysAllow, nil)
+	s.ConfigureZAP(&mockZAP{code: "200", meta: zapMeta}, "dom")
+	s.SetPeerAddr("127.0.0.1:1")
+
+	hello := encodeHelloForTest(t, []byte("u"), []byte("p"))
+	if _, _, err := s.Receive(hello); err != nil {
+		t.Fatalf("HELLO Receive: %v", err)
+	}
+
+	initiate := encodeInitiateForTest(t, wire.Metadata{{Name: []byte("Socket-Type"), Value: []byte("REQ")}})
+	_, done, err := s.Receive(initiate)
+	if err != nil || !done {
+		t.Fatalf("INITIATE Receive: done=%v err=%v", done, err)
+	}
+
+	v, ok := s.PeerMetadata().Get("X-Tenant")
+	if !ok || string(v) != "acme" {
+		t.Fatalf("PeerMetadata X-Tenant = %q ok=%v, want acme", v, ok)
+	}
+}
+
+func TestPlainServerNoZAPUnchanged(t *testing.T) {
+	// Without ZAP, local callback is invoked as before.
+	s := NewServer(alwaysDeny, nil)
+	hello := encodeHelloForTest(t, []byte("u"), []byte("p"))
+	_, _, err := s.Receive(hello)
+	if !errors.Is(err, ErrAuthRejected) {
+		t.Fatalf("err = %v, want ErrAuthRejected", err)
+	}
 }
