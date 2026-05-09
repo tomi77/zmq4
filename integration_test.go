@@ -368,3 +368,100 @@ func runPAIR(t *testing.T, ctx context.Context, ep string, serverOpts, clientOpt
 		t.Fatalf("want pong, got %q", reply)
 	}
 }
+
+func TestPUSHSndHWMBlock(t *testing.T) {
+	// PUSH with sndHWM=1 (outCh cap=1) and PULL with rcvHWM=1 (inCh cap=1).
+	//
+	// The observable pipeline capacity is 4 messages before sends block:
+	//   PULL inCh (1) + net.Pipe internal slot (1) + writeLoop in-flight (1) + PUSH outCh (1).
+	// After 4 messages are queued without any pull.Recv(), the writeLoop blocks
+	// at the network layer (PULL readLoop blocked on full inCh), outCh is full,
+	// so the 5th send blocks.  pull.Recv() drains one from inCh, unblocking the
+	// pipeline and allowing the blocked send to complete.
+	endpoint := "inproc://TestPUSHSndHWMBlock"
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	push := zmq4.NewPUSH(zmq4.WithSndHWM(1))
+	pull := zmq4.NewPULL(zmq4.WithRcvHWM(1))
+	defer push.Close()
+	defer pull.Close()
+
+	if err := push.Bind(ctx, endpoint); err != nil {
+		t.Fatal(err)
+	}
+	if err := pull.Connect(ctx, endpoint); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(20 * time.Millisecond) // allow handshake
+
+	// Fill the pipeline: 4 sends succeed immediately, saturating all buffers.
+	for i := range 4 {
+		if err := push.Send(ctx, zmq4.Message{[]byte(fmt.Sprintf("fill%d", i))}); err != nil {
+			t.Fatalf("fill send %d: %v", i, err)
+		}
+	}
+	// Allow the writeLoop to advance and reach the network-blocked state.
+	time.Sleep(20 * time.Millisecond)
+
+	// 5th send should block because outCh is full and writeLoop is network-blocked.
+	done := make(chan error, 1)
+	go func() {
+		done <- push.Send(ctx, zmq4.Message{[]byte("blocked")})
+	}()
+
+	select {
+	case err := <-done:
+		t.Fatalf("5th send completed immediately (want block): err=%v", err)
+	case <-time.After(30 * time.Millisecond):
+		// correct: still blocking
+	}
+
+	// Drain one message from PULL — opens space in inCh, unblocking the pipeline.
+	if _, err := pull.Recv(ctx); err != nil {
+		t.Fatalf("recv: %v", err)
+	}
+
+	// Blocked send should now complete.
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("blocked send after drain: %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("blocked send did not complete after drain")
+	}
+}
+
+func TestPUBSndHWMDrop(t *testing.T) {
+	// PUB with sndHWM=1 drops messages silently when queue is full.
+	endpoint := "inproc://TestPUBSndHWMDrop"
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	pub := zmq4.NewPUB(zmq4.WithSndHWM(1))
+	sub := zmq4.NewSUB()
+	defer pub.Close()
+	defer sub.Close()
+
+	if err := pub.Bind(ctx, endpoint); err != nil {
+		t.Fatal(err)
+	}
+	if err := sub.Connect(ctx, endpoint); err != nil {
+		t.Fatal(err)
+	}
+	if err := sub.Subscribe([]byte("")); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(20 * time.Millisecond) // allow handshake + subscription
+
+	// Send more messages than sndHWM=1 can hold; all sends must return nil
+	// (PUB.Send never returns an error for drops).
+	for i := range 5 {
+		msg := zmq4.Message{[]byte(fmt.Sprintf("msg%d", i))}
+		if err := pub.Send(ctx, msg); err != nil {
+			t.Fatalf("send %d: unexpected error: %v", i, err)
+		}
+	}
+	// Test passes if no hang and no unexpected error. Drop is silent.
+}
