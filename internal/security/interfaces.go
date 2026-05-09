@@ -89,9 +89,9 @@ type ClientMechanism interface {
 // via ConfigureZAP and call it during the authentication step of the handshake.
 type ZAPCaller interface {
 	// Authenticate sends a ZAP request and returns (statusCode, userID, metadata, err).
-	// statusCode is one of "200", "300", "400", "500" (see zap.Status* constants).
-	// err is non-nil only for transport/handler errors, not for auth failures —
-	// auth failures are expressed via statusCode.
+	// Only statusCode "200" indicates acceptance; all other codes ("300", "400", "500")
+	// are treated as denial. err is non-nil only for transport/handler errors, not for
+	// auth failures — auth failures are expressed via statusCode.
 	Authenticate(domain, address, identity, mechanism string, credentials [][]byte) (statusCode, userID string, metadata wire.Metadata, err error)
 }
 
