@@ -61,6 +61,12 @@ type ServerState struct {
 	helloProcessed, done, failed, closed bool
 
 	rand io.Reader
+
+	// ZAP — set by ConfigureZAP; only used on the server side.
+	zap      security.ZAPCaller
+	domain   string
+	peerAddr string
+	zapMeta  wire.Metadata
 }
 
 // NewServer constructs a CURVE ServerState. Panics if opts.Authorizer
@@ -108,6 +114,16 @@ func NewServer(opts ServerOptions) (*ServerState, error) {
 		rand:       rng,
 	}, nil
 }
+
+// ConfigureZAP injects a ZAP client and domain. Satisfies security.ZAPConfigurer.
+func (s *ServerState) ConfigureZAP(caller security.ZAPCaller, domain string) {
+	s.zap = caller
+	s.domain = domain
+}
+
+// SetPeerAddr stores the peer's network address for ZAP requests.
+// Satisfies security.PeerAddrSetter.
+func (s *ServerState) SetPeerAddr(addr string) { s.peerAddr = addr }
 
 // Done reports whether the handshake completed successfully.
 func (s *ServerState) Done() bool { return s.done && !s.failed && !s.closed }
@@ -190,7 +206,16 @@ func (s *ServerState) handleInitiate(cmd wire.Command) (*wire.Command, bool, err
 	// Defensive copy of metadata before passing to Authorizer.
 	clonedMd := seccommon.CloneMetadata(md)
 
-	if authErr := s.authorizer(peerLongPub, clonedMd); authErr != nil {
+	if s.zap != nil {
+		code, _, zapMeta, zapErr := s.zap.Authenticate(
+			s.domain, s.peerAddr, "",
+			"CURVE", [][]byte{peerLongPub[:]},
+		)
+		if zapErr != nil || code != "200" {
+			return s.failZAPDenied(code)
+		}
+		s.zapMeta = zapMeta
+	} else if authErr := s.authorizer(peerLongPub, clonedMd); authErr != nil {
 		return s.failAuthRejected(authErr)
 	}
 
@@ -215,6 +240,16 @@ func (s *ServerState) failAuthRejected(authErr error) (*wire.Command, bool, erro
 		return nil, false, fmt.Errorf("curve: encode ERROR: %w", encErr)
 	}
 	return &errCmd, false, fmt.Errorf("%w: %s", ErrAuthRejected, reason)
+}
+
+func (s *ServerState) failZAPDenied(statusCode string) (*wire.Command, bool, error) {
+	s.failed = true
+	reason := seccommon.SanitizeReason("ZAP " + statusCode)
+	errCmd, encErr := wire.ErrorCommand{Reason: reason}.Encode()
+	if encErr != nil {
+		return nil, false, fmt.Errorf("curve: encode ERROR: %w", encErr)
+	}
+	return &errCmd, false, fmt.Errorf("%w: status %s", security.ErrZAPDenied, statusCode)
 }
 
 func (s *ServerState) handleHello(cmd wire.Command) (*wire.Command, bool, error) {
@@ -267,9 +302,16 @@ func (s *ServerState) failPeerError(cmd wire.Command) error {
 // passed to the Authorizer). Valid only after Done().
 func (s *ServerState) PeerPublicKey() PublicKey { return s.peerLongPub }
 
-// PeerMetadata returns the metadata the client sent in INITIATE. Valid
-// only after Done().
-func (s *ServerState) PeerMetadata() wire.Metadata { return s.peer }
+// PeerMetadata returns the peer's READY metadata merged with any ZAP reply
+// metadata. Valid only after Receive returned done=true.
+// The returned slice is owned by the State; callers MUST NOT mutate it.
+func (s *ServerState) PeerMetadata() wire.Metadata {
+	if len(s.zapMeta) == 0 {
+		return s.peer
+	}
+	merged := seccommon.CloneMetadata(s.peer)
+	return append(merged, s.zapMeta...)
+}
 
 // Wrap encapsulates an outgoing frame as MESSAGE under
 // messageServerPrefix. See ClientState.Wrap for the contract.

@@ -518,3 +518,106 @@ func TestServerStateName(t *testing.T) {
 
 // silence unused-import warning for crypto/rand (used by future tasks).
 var _ = rand.Reader
+
+// mockZAP is a ZAPCaller stub for testing.
+type mockZAP struct {
+	code string
+	meta wire.Metadata
+}
+
+func (m *mockZAP) Authenticate(domain, address, identity, mechanism string, credentials [][]byte) (string, string, wire.Metadata, error) {
+	return m.code, "", m.meta, nil
+}
+
+// runCurveServerSideExchange drives a full HELLO→WELCOME→INITIATE exchange
+// using a real ClientState. Returns the server error from the INITIATE step
+// (nil on success, non-nil on auth/ZAP rejection).
+func runCurveServerSideExchange(t *testing.T, srv *ServerState, serverPub PublicKey, clientPub PublicKey, clientSec SecretKey) error {
+	t.Helper()
+	c, err := NewClient(ClientOptions{
+		ServerKey: serverPub, OurPublicKey: clientPub, OurSecretKey: &clientSec,
+	})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	hello, err := c.Start()
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	welcome, _, err := srv.Receive(hello)
+	if err != nil {
+		t.Fatalf("Receive(HELLO): %v", err)
+	}
+	initiate, _, err := c.Receive(*welcome)
+	if err != nil {
+		t.Fatalf("Receive(WELCOME): %v", err)
+	}
+	_, _, srvErr := srv.Receive(*initiate)
+	return srvErr
+}
+
+func TestCurveServerZAPAllowOverridesAuthorizer(t *testing.T) {
+	serverPub, serverSec := makePair(t)
+	clientPub, clientSec := makePair(t)
+
+	denyAll := Authorizer(func(_ PublicKey, _ wire.Metadata) error {
+		return errors.New("deny")
+	})
+	srv, err := NewServer(ServerOptions{
+		OurPublicKey: serverPub, OurSecretKey: &serverSec,
+		Authorizer: denyAll, Rand: rand.Reader,
+	})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	srv.ConfigureZAP(&mockZAP{code: "200"}, "dom")
+	srv.SetPeerAddr("127.0.0.1:1")
+
+	if err := runCurveServerSideExchange(t, srv, serverPub, clientPub, clientSec); err != nil {
+		t.Fatalf("CURVE exchange with ZAP allow: %v", err)
+	}
+	if !srv.Done() {
+		t.Fatal("Done() = false, want true")
+	}
+}
+
+func TestCurveServerZAPDenySendsError(t *testing.T) {
+	serverPub, serverSec := makePair(t)
+	clientPub, clientSec := makePair(t)
+
+	allowAll := Authorizer(func(_ PublicKey, _ wire.Metadata) error { return nil })
+	srv, err := NewServer(ServerOptions{
+		OurPublicKey: serverPub, OurSecretKey: &serverSec,
+		Authorizer: allowAll, Rand: rand.Reader,
+	})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	srv.ConfigureZAP(&mockZAP{code: "400"}, "dom")
+	srv.SetPeerAddr("127.0.0.1:1")
+
+	err = runCurveServerSideExchange(t, srv, serverPub, clientPub, clientSec)
+	if !errors.Is(err, security.ErrZAPDenied) {
+		t.Fatalf("err = %v, want ErrZAPDenied", err)
+	}
+}
+
+func TestCurveServerNoZAPUnchanged(t *testing.T) {
+	serverPub, serverSec := makePair(t)
+	clientPub, clientSec := makePair(t)
+
+	denyAll := Authorizer(func(_ PublicKey, _ wire.Metadata) error {
+		return errors.New("deny")
+	})
+	srv, err := NewServer(ServerOptions{
+		OurPublicKey: serverPub, OurSecretKey: &serverSec,
+		Authorizer: denyAll, Rand: rand.Reader,
+	})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	err = runCurveServerSideExchange(t, srv, serverPub, clientPub, clientSec)
+	if !errors.Is(err, ErrAuthRejected) {
+		t.Fatalf("err = %v, want ErrAuthRejected", err)
+	}
+}

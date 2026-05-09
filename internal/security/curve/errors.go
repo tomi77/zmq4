@@ -1,6 +1,10 @@
 package curve
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/tomi77/zmq4/internal/security"
+)
 
 var (
 	// ErrInvalidOptions is returned by NewClient/NewServer when the
@@ -88,3 +92,7 @@ var (
 	// would wrap past 2^64-1.
 	ErrNonceExhausted = errors.New("curve: nonce exhausted")
 )
+
+// ErrZAPDenied is returned by ServerState.Receive when the ZAP handler rejects
+// the connection. Alias of security.ErrZAPDenied.
+var ErrZAPDenied = security.ErrZAPDenied
