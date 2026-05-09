@@ -84,3 +84,70 @@ func TestWithPLAINClientMechMismatch(t *testing.T) {
 		t.Fatalf("want ErrSecurityMismatch, got %v", err)
 	}
 }
+
+func TestNewSocketConfigHWMDefaults(t *testing.T) {
+	cfg := newSocketConfig(nil)
+	if cfg.sndHWM != 1000 {
+		t.Fatalf("sndHWM default: got %d, want 1000", cfg.sndHWM)
+	}
+	if cfg.rcvHWM != 1000 {
+		t.Fatalf("rcvHWM default: got %d, want 1000", cfg.rcvHWM)
+	}
+	if cfg.sndOverflow != Block {
+		t.Fatalf("sndOverflow default: got %v, want Block", cfg.sndOverflow)
+	}
+}
+
+func TestWithSndHWMPanic(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for n<=0")
+		}
+	}()
+	WithSndHWM(0)
+}
+
+func TestWithRcvHWMPanic(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for n<=0")
+		}
+	}()
+	WithRcvHWM(0)
+}
+
+func TestWithSndHWMOption(t *testing.T) {
+	cfg := newSocketConfig([]Option{WithSndHWM(42)})
+	if cfg.sndHWM != 42 {
+		t.Fatalf("got %d, want 42", cfg.sndHWM)
+	}
+}
+
+func TestWithRcvHWMOption(t *testing.T) {
+	cfg := newSocketConfig([]Option{WithRcvHWM(7)})
+	if cfg.rcvHWM != 7 {
+		t.Fatalf("got %d, want 7", cfg.rcvHWM)
+	}
+}
+
+func TestWithSndHWMPolicyOption(t *testing.T) {
+	cfg := newSocketConfig([]Option{WithSndHWMPolicy(Drop)})
+	if cfg.sndOverflow != Drop {
+		t.Fatalf("got %v, want Drop", cfg.sndOverflow)
+	}
+}
+
+func TestWithSndOverflowInternal(t *testing.T) {
+	cfg := newSocketConfig([]Option{withSndOverflow(Drop)})
+	if cfg.sndOverflow != Drop {
+		t.Fatalf("got %v, want Drop", cfg.sndOverflow)
+	}
+}
+
+func TestWithSndHWMPolicyOverridesInternal(t *testing.T) {
+	// User-supplied policy wins over socket-type internal default.
+	cfg := newSocketConfig([]Option{withSndOverflow(Drop), WithSndHWMPolicy(Block)})
+	if cfg.sndOverflow != Block {
+		t.Fatalf("got %v, want Block", cfg.sndOverflow)
+	}
+}

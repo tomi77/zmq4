@@ -11,6 +11,16 @@ import (
 	"github.com/tomi77/zmq4/internal/wire"
 )
 
+// OverflowPolicy specifies what happens when a pipe's send queue (SNDHWM) is full.
+type OverflowPolicy int
+
+const (
+	// Block causes the sender to wait until space is available or the socket closes.
+	Block OverflowPolicy = iota
+	// Drop silently discards the message without blocking.
+	Drop
+)
+
 const defaultHandshakeTimeout = 5 * time.Second
 
 // socketConfig holds per-socket configuration built from Option functions.
@@ -22,6 +32,9 @@ type socketConfig struct {
 	// identity is the local Identity metadata value; nil = omit.
 	identity         []byte
 	handshakeTimeout time.Duration
+	sndHWM           int            // outbound pipe queue capacity; default 1000
+	rcvHWM           int            // inbound pipe queue capacity; default 1000
+	sndOverflow      OverflowPolicy // behaviour when sndHWM is reached; default Block
 }
 
 // localMeta returns the metadata this socket advertises in handshake as
@@ -77,6 +90,9 @@ type Option func(*socketConfig)
 func newSocketConfig(opts []Option) *socketConfig {
 	cfg := &socketConfig{
 		handshakeTimeout: defaultHandshakeTimeout,
+		sndHWM:           1000,
+		rcvHWM:           1000,
+		sndOverflow:      Block,
 	}
 	// Default: NULL mechanism. Factory closures capture cfg pointer so
 	// WithIdentity applied later is picked up at connection time.
@@ -178,4 +194,31 @@ func WithHandshakeTimeout(d time.Duration) Option {
 	return func(cfg *socketConfig) {
 		cfg.handshakeTimeout = d
 	}
+}
+
+// WithSndHWM sets the outbound pipe queue capacity. Panics if n <= 0.
+func WithSndHWM(n int) Option {
+	if n <= 0 {
+		panic("zmq4: WithSndHWM: n must be > 0")
+	}
+	return func(cfg *socketConfig) { cfg.sndHWM = n }
+}
+
+// WithRcvHWM sets the inbound pipe queue capacity. Panics if n <= 0.
+func WithRcvHWM(n int) Option {
+	if n <= 0 {
+		panic("zmq4: WithRcvHWM: n must be > 0")
+	}
+	return func(cfg *socketConfig) { cfg.rcvHWM = n }
+}
+
+// WithSndHWMPolicy overrides the default overflow policy for this socket type.
+func WithSndHWMPolicy(p OverflowPolicy) Option {
+	return func(cfg *socketConfig) { cfg.sndOverflow = p }
+}
+
+// withSndOverflow is an internal option used by socket-type constructors
+// (e.g. NewPUB) to set a type-appropriate default before user opts are applied.
+func withSndOverflow(p OverflowPolicy) Option {
+	return func(cfg *socketConfig) { cfg.sndOverflow = p }
 }
