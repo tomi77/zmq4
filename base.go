@@ -16,6 +16,10 @@ var compatiblePeers = map[string]map[string]bool{
 	"REP":    {"REQ": true, "DEALER": true},
 	"DEALER": {"REP": true, "ROUTER": true, "DEALER": true},
 	"ROUTER": {"REQ": true, "DEALER": true, "ROUTER": true},
+	"PUB":    {"SUB": true, "XSUB": true},
+	"SUB":    {"PUB": true, "XPUB": true},
+	"XPUB":   {"SUB": true, "XSUB": true},
+	"XSUB":   {"PUB": true, "XPUB": true},
 }
 
 // socketBase holds shared goroutine and lifecycle machinery for all socket
@@ -28,6 +32,15 @@ type socketBase struct {
 	wg          sync.WaitGroup // tracks acceptor + handshake goroutines
 	listeners   []net.Listener
 	listenersMu sync.Mutex
+
+	// postHandshake, when non-nil, is called by addConn instead of the
+	// default newPipe path. The compatibility check always runs first.
+	// Used by PUB/XPUB (pubPipe creation) and SUB/XSUB (subscription replay).
+	postHandshake func(c *conn.Conn) error
+
+	// closeFn, when non-nil, is called inside close() before waiting for
+	// goroutines. Used by PUB/XPUB to close pubPipes and wait for their wg.
+	closeFn func()
 }
 
 func newSocketBase(cfg *socketConfig) socketBase {
@@ -124,6 +137,9 @@ func (sb *socketBase) addConn(c *conn.Conn, localSocketType string) error {
 			return ErrIncompatiblePeer
 		}
 	}
+	if sb.postHandshake != nil {
+		return sb.postHandshake(c)
+	}
 	identity := peerIdentity(meta)
 	p := newPipe(c, identity)
 	sb.pipes.add(p)
@@ -136,6 +152,9 @@ func (sb *socketBase) addConn(c *conn.Conn, localSocketType string) error {
 func (sb *socketBase) close() {
 	sb.closeOnce.Do(func() {
 		close(sb.closeCh)
+		if sb.closeFn != nil {
+			sb.closeFn()
+		}
 		sb.listenersMu.Lock()
 		for _, ln := range sb.listeners {
 			ln.Close()
