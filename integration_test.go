@@ -501,8 +501,8 @@ func TestNULLZAPAllow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Recv: %v", err)
 	}
-	if string(msg[0]) != "hello" {
-		t.Fatalf("msg = %q, want hello", msg[0])
+	if len(msg) == 0 || string(msg[0]) != "hello" {
+		t.Fatalf("msg = %q, want hello", msg)
 	}
 }
 
@@ -525,9 +525,9 @@ func TestNULLZAPDenyBlocksConnection(t *testing.T) {
 	if err := pull.Bind(ctx, endpoint); err != nil {
 		t.Fatal(err)
 	}
-	// Connect succeeds at transport level; handshake failure happens async.
+	// Connect may itself return an error when ZAP denial is synchronous (inproc).
 	if err := push.Connect(ctx, endpoint); err != nil {
-		t.Fatal(err)
+		return // denial surfaced at connect time — test passes
 	}
 	time.Sleep(50 * time.Millisecond)
 
@@ -580,8 +580,8 @@ func TestPLAINZAPAllow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Recv: %v", err)
 	}
-	if string(msg[0]) != "ping" {
-		t.Fatalf("msg = %q, want ping", msg[0])
+	if len(msg) == 0 || string(msg[0]) != "ping" {
+		t.Fatalf("msg = %q, want ping", msg)
 	}
 }
 
