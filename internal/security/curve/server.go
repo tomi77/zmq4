@@ -302,8 +302,8 @@ func (s *ServerState) failPeerError(cmd wire.Command) error {
 // passed to the Authorizer). Valid only after Done().
 func (s *ServerState) PeerPublicKey() PublicKey { return s.peerLongPub }
 
-// PeerMetadata returns the peer's READY metadata merged with any ZAP reply
-// metadata. Valid only after Receive returned done=true.
+// PeerMetadata returns the metadata the client sent in INITIATE, merged with
+// any ZAP reply metadata. Valid only after Receive returned done=true.
 // The returned slice is owned by the State; callers MUST NOT mutate it.
 func (s *ServerState) PeerMetadata() wire.Metadata {
 	if len(s.zapMeta) == 0 {

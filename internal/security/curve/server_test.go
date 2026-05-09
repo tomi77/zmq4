@@ -596,9 +596,63 @@ func TestCurveServerZAPDenySendsError(t *testing.T) {
 	srv.ConfigureZAP(&mockZAP{code: "400"}, "dom")
 	srv.SetPeerAddr("127.0.0.1:1")
 
-	err = runCurveServerSideExchange(t, srv, serverPub, clientPub, clientSec)
-	if !errors.Is(err, security.ErrZAPDenied) {
-		t.Fatalf("err = %v, want ErrZAPDenied", err)
+	// Run the exchange manually so we can inspect the ERROR command.
+	c, err := NewClient(ClientOptions{
+		ServerKey: serverPub, OurPublicKey: clientPub, OurSecretKey: &clientSec,
+	})
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	hello, err := c.Start()
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	welcome, _, err := srv.Receive(hello)
+	if err != nil {
+		t.Fatalf("Receive(HELLO): %v", err)
+	}
+	initiate, _, err := c.Receive(*welcome)
+	if err != nil {
+		t.Fatalf("Receive(WELCOME): %v", err)
+	}
+	out, _, srvErr := srv.Receive(*initiate)
+	if !errors.Is(srvErr, security.ErrZAPDenied) {
+		t.Fatalf("err = %v, want ErrZAPDenied", srvErr)
+	}
+	if out == nil {
+		t.Fatal("out = nil, want ERROR command")
+	}
+	if out.Name != wire.ErrorCommandName {
+		t.Fatalf("out.Name = %q, want ERROR", out.Name)
+	}
+}
+
+func TestCurveServerZAPMetadataMerge(t *testing.T) {
+	serverPub, serverSec := makePair(t)
+	clientPub, clientSec := makePair(t)
+
+	zapMeta := wire.Metadata{
+		{Name: []byte("X-Role"), Value: []byte("admin")},
+	}
+	allowAll := Authorizer(func(_ PublicKey, _ wire.Metadata) error { return nil })
+	srv, err := NewServer(ServerOptions{
+		OurPublicKey: serverPub, OurSecretKey: &serverSec,
+		Authorizer: allowAll, Rand: rand.Reader,
+	})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	srv.ConfigureZAP(&mockZAP{code: "200", meta: zapMeta}, "dom")
+	srv.SetPeerAddr("127.0.0.1:1")
+
+	if err := runCurveServerSideExchange(t, srv, serverPub, clientPub, clientSec); err != nil {
+		t.Fatalf("CURVE exchange: %v", err)
+	}
+
+	meta := srv.PeerMetadata()
+	v, ok := meta.Get("X-Role")
+	if !ok || string(v) != "admin" {
+		t.Fatalf("PeerMetadata X-Role = %q ok=%v, want admin", v, ok)
 	}
 }
 
