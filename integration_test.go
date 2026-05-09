@@ -16,6 +16,7 @@ import (
 	"github.com/tomi77/zmq4/internal/security/curve"
 	"github.com/tomi77/zmq4/internal/security/plain"
 	"github.com/tomi77/zmq4/internal/wire"
+	"github.com/tomi77/zmq4/zap"
 )
 
 // freePort returns an ephemeral TCP port that was free at time of call.
@@ -464,4 +465,161 @@ func TestPUBSndHWMDrop(t *testing.T) {
 		}
 	}
 	// Test passes if no hang and no unexpected error. Drop is silent.
+}
+
+func TestNULLZAPAllow(t *testing.T) {
+	// NULL mechanism + ZAP allow-all: connection succeeds, message delivered.
+	endpoint := "inproc://TestNULLZAPAllow"
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	router := zap.NewRouter(zap.HandlerFunc(func(r zap.Request) (zap.Reply, error) {
+		if r.Mechanism != "NULL" {
+			return zap.Reply{StatusCode: zap.StatusDenied, StatusText: "wrong mechanism"}, nil
+		}
+		return zap.Reply{StatusCode: zap.StatusOK, UserID: "anonymous"}, nil
+	}))
+	defer router.Close()
+
+	push := zmq4.NewPUSH()
+	pull := zmq4.NewPULL(zmq4.WithZAPDomain(router, ""))
+	defer push.Close()
+	defer pull.Close()
+
+	if err := pull.Bind(ctx, endpoint); err != nil {
+		t.Fatal(err)
+	}
+	if err := push.Connect(ctx, endpoint); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(20 * time.Millisecond)
+
+	if err := push.Send(ctx, zmq4.Message{[]byte("hello")}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	msg, err := pull.Recv(ctx)
+	if err != nil {
+		t.Fatalf("Recv: %v", err)
+	}
+	if string(msg[0]) != "hello" {
+		t.Fatalf("msg = %q, want hello", msg[0])
+	}
+}
+
+func TestNULLZAPDenyBlocksConnection(t *testing.T) {
+	// NULL mechanism + ZAP deny-all: connection is rejected at handshake.
+	endpoint := "inproc://TestNULLZAPDenyBlocksConnection"
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	router := zap.NewRouter(zap.HandlerFunc(func(r zap.Request) (zap.Reply, error) {
+		return zap.Reply{StatusCode: zap.StatusDenied, StatusText: "denied"}, nil
+	}))
+	defer router.Close()
+
+	push := zmq4.NewPUSH()
+	pull := zmq4.NewPULL(zmq4.WithZAPDomain(router, "secure"))
+	defer push.Close()
+	defer pull.Close()
+
+	if err := pull.Bind(ctx, endpoint); err != nil {
+		t.Fatal(err)
+	}
+	// Connect succeeds at transport level; handshake failure happens async.
+	if err := push.Connect(ctx, endpoint); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	// Send should time out because no pipe was established.
+	sendCtx, sendCancel := context.WithTimeout(ctx, 100*time.Millisecond)
+	defer sendCancel()
+	err := push.Send(sendCtx, zmq4.Message{[]byte("blocked")})
+	if err == nil {
+		t.Fatal("Send succeeded, want error (no pipe established after ZAP denial)")
+	}
+}
+
+func TestPLAINZAPAllow(t *testing.T) {
+	// PLAIN mechanism + ZAP allow: connection succeeds.
+	endpoint := "inproc://TestPLAINZAPAllow"
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	router := zap.NewRouter(zap.HandlerFunc(func(r zap.Request) (zap.Reply, error) {
+		if r.Mechanism != "PLAIN" || len(r.Credentials) < 2 {
+			return zap.Reply{StatusCode: zap.StatusDenied}, nil
+		}
+		if string(r.Credentials[0]) == "alice" && string(r.Credentials[1]) == "secret" {
+			return zap.Reply{StatusCode: zap.StatusOK, UserID: "alice"}, nil
+		}
+		return zap.Reply{StatusCode: zap.StatusDenied}, nil
+	}))
+	defer router.Close()
+
+	// Local auth callback always denies — ZAP takes precedence.
+	localDeny := plain.Authenticator(func(u, p []byte) error { return fmt.Errorf("local deny") })
+
+	rep := zmq4.NewREP(zmq4.WithPLAINServer(localDeny), zmq4.WithZAPDomain(router, ""))
+	req := zmq4.NewREQ(zmq4.WithPLAIN("alice", "secret"))
+	defer rep.Close()
+	defer req.Close()
+
+	if err := rep.Bind(ctx, endpoint); err != nil {
+		t.Fatal(err)
+	}
+	if err := req.Connect(ctx, endpoint); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(30 * time.Millisecond)
+
+	if err := req.Send(ctx, zmq4.Message{[]byte("ping")}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	msg, err := rep.Recv(ctx)
+	if err != nil {
+		t.Fatalf("Recv: %v", err)
+	}
+	if string(msg[0]) != "ping" {
+		t.Fatalf("msg = %q, want ping", msg[0])
+	}
+}
+
+func TestPLAINZAPDenyRejectsConnection(t *testing.T) {
+	// PLAIN mechanism + ZAP deny: wrong password is rejected.
+	endpoint := "inproc://TestPLAINZAPDenyRejectsConnection"
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	router := zap.NewRouter(zap.HandlerFunc(func(r zap.Request) (zap.Reply, error) {
+		return zap.Reply{StatusCode: zap.StatusDenied, StatusText: "bad credentials"}, nil
+	}))
+	defer router.Close()
+
+	localAllow := plain.Authenticator(func(u, p []byte) error { return nil })
+
+	rep := zmq4.NewREP(zmq4.WithPLAINServer(localAllow), zmq4.WithZAPDomain(router, ""))
+	req := zmq4.NewREQ(zmq4.WithPLAIN("alice", "wrong"))
+	defer rep.Close()
+	defer req.Close()
+
+	if err := rep.Bind(ctx, endpoint); err != nil {
+		t.Fatal(err)
+	}
+	// Connect may itself return an error when ZAP denial is synchronous (inproc),
+	// or it may succeed at transport level with rejection happening asynchronously.
+	// Either way, no usable pipe is established.
+	connectErr := req.Connect(ctx, endpoint)
+	if connectErr != nil {
+		// Denial surfaced at connect time — test passes.
+		return
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	sendCtx, sendCancel := context.WithTimeout(ctx, 100*time.Millisecond)
+	defer sendCancel()
+	err := req.Send(sendCtx, zmq4.Message{[]byte("blocked")})
+	if err == nil {
+		t.Fatal("Send succeeded, want timeout (no pipe after ZAP denial)")
+	}
 }
