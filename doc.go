@@ -3,18 +3,30 @@
 //
 // # Socket types
 //
-// F5a provides four socket types for the request-reply pattern (RFC 28):
+// Request-reply pattern (RFC 28):
 //
 //   - [REQ] — request socket (alternating Send→Recv)
 //   - [REP] — reply socket (alternating Recv→Send)
 //   - [DEALER] — async request socket (round-robin send, fair-queue recv)
 //   - [ROUTER] — identity-routing socket (msg[0] is always the peer identity)
 //
+// Publish-subscribe pattern (RFC 29):
+//
+//   - [PUB] — publish socket (topic-filtered broadcast; drop on slow peers)
+//   - [SUB] — subscribe socket (Subscribe/Unsubscribe + fair-queue recv)
+//   - [XPUB] — extended publish (like PUB; Recv returns subscription frames)
+//   - [XSUB] — extended subscribe (like SUB; Send forwards raw sub frames)
+//
 // # Creating a socket
 //
-//	req := zmq4.NewREQ(zmq4.WithNULL())
-//	if err := req.Connect(ctx, "tcp://127.0.0.1:5555"); err != nil { ... }
-//	defer req.Close()
+//	pub := zmq4.NewPUB(zmq4.WithNULL())
+//	if err := pub.Bind(ctx, "tcp://127.0.0.1:5555"); err != nil { ... }
+//	defer pub.Close()
+//
+//	sub := zmq4.NewSUB()
+//	if err := sub.Connect(ctx, "tcp://127.0.0.1:5555"); err != nil { ... }
+//	sub.Subscribe([]byte("topic"))
+//	msg, err := sub.Recv(ctx)
 //
 // # Security
 //
