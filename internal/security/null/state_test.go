@@ -348,6 +348,111 @@ func TestStateName(t *testing.T) {
 	}
 }
 
+// --- ZAP tests ---
+
+type mockZAP struct {
+	code string
+	uid  string
+	meta wire.Metadata
+	err  error
+}
+
+func (m *mockZAP) Authenticate(domain, address, identity, mechanism string, credentials [][]byte) (string, string, wire.Metadata, error) {
+	return m.code, m.uid, m.meta, m.err
+}
+
+func TestNullServerZAPAllow(t *testing.T) {
+	s := New(nil)
+	s.ConfigureZAP(&mockZAP{code: "200", uid: "alice"}, "test")
+	s.SetPeerAddr("1.2.3.4:9000")
+
+	// Server must Start() first.
+	if _, err := s.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	peerReady, _ := wire.ReadyCommand{}.Encode()
+	out, done, err := s.Receive(peerReady)
+	if err != nil {
+		t.Fatalf("Receive: unexpected error %v", err)
+	}
+	if out != nil {
+		t.Fatalf("out = %v, want nil", out)
+	}
+	if !done {
+		t.Fatal("done = false, want true")
+	}
+}
+
+func TestNullServerZAPDeny(t *testing.T) {
+	s := New(nil)
+	s.ConfigureZAP(&mockZAP{code: "400"}, "test")
+	s.SetPeerAddr("1.2.3.4:9000")
+
+	if _, err := s.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	peerReady, _ := wire.ReadyCommand{}.Encode()
+	out, done, err := s.Receive(peerReady)
+	if !errors.Is(err, security.ErrZAPDenied) {
+		t.Fatalf("err = %v, want ErrZAPDenied", err)
+	}
+	if done {
+		t.Fatal("done = true, want false")
+	}
+	if out == nil {
+		t.Fatal("out = nil, want ERROR command")
+	}
+	if out.Name != wire.ErrorCommandName {
+		t.Fatalf("out.Name = %q, want ERROR", out.Name)
+	}
+}
+
+func TestNullServerZAPMetadataMerge(t *testing.T) {
+	zapMeta := wire.Metadata{
+		{Name: []byte("X-Role"), Value: []byte("admin")},
+	}
+	s := New(nil)
+	s.ConfigureZAP(&mockZAP{code: "200", meta: zapMeta}, "test")
+	s.SetPeerAddr("127.0.0.1:1")
+
+	if _, err := s.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	peerReady, _ := wire.ReadyCommand{
+		Metadata: wire.Metadata{{Name: []byte("Socket-Type"), Value: []byte("PUSH")}},
+	}.Encode()
+	_, done, err := s.Receive(peerReady)
+	if err != nil || !done {
+		t.Fatalf("Receive: done=%v err=%v", done, err)
+	}
+
+	meta := s.PeerMetadata()
+	v, ok := meta.Get("X-Role")
+	if !ok || string(v) != "admin" {
+		t.Fatalf("PeerMetadata X-Role = %q ok=%v, want admin", v, ok)
+	}
+	v, ok = meta.Get("Socket-Type")
+	if !ok || string(v) != "PUSH" {
+		t.Fatalf("PeerMetadata Socket-Type = %q ok=%v, want PUSH", v, ok)
+	}
+}
+
+func TestNullServerNoZAPUnchanged(t *testing.T) {
+	// Without ZAP, existing behaviour unchanged.
+	s := New(nil)
+	if _, err := s.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	peerReady, _ := wire.ReadyCommand{}.Encode()
+	_, done, err := s.Receive(peerReady)
+	if err != nil || !done {
+		t.Fatalf("Receive: done=%v err=%v", done, err)
+	}
+}
+
 // newDoneState drives the NULL handshake to completion using a paired
 // peer-side State so the test does not have to hand-craft READY bytes.
 // Helper for the Wrap/Unwrap tests above.

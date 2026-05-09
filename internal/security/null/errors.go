@@ -1,6 +1,10 @@
 package null
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/tomi77/zmq4/internal/security"
+)
 
 var (
 	// ErrAlreadyStarted is returned by Start when called more than once.
@@ -30,3 +34,7 @@ var (
 	// fails to parse as metadata.
 	ErrMalformedReady = errors.New("null: malformed READY")
 )
+
+// ErrZAPDenied is returned by State.Receive when the ZAP handler rejects
+// the connection. Alias of security.ErrZAPDenied.
+var ErrZAPDenied = security.ErrZAPDenied
