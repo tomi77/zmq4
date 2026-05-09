@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sync"
-
-	"github.com/tomi77/zmq4/internal/wire"
 )
 
 // REP is a reply socket. Pairs with REQ and DEALER.
@@ -76,24 +74,11 @@ func (s *REP) Send(ctx context.Context, msg Message) error {
 	s.envelope = nil
 	s.mu.Unlock()
 
-	// Send envelope frames (all with More=true), then payload frames.
-	// On any write failure the ZMTP stream is corrupt — always close the
-	// connection to prevent the peer from waiting for frames that will
-	// never arrive. Closing an already-closed connection is safe (idempotent).
-	for _, ef := range env {
-		if err := p.conn.WriteFrame(wire.Frame{
-			Kind: wire.FrameMessage,
-			More: true,
-			Body: ef,
-		}); err != nil {
-			p.conn.Close()
-			return err
-		}
-	}
-
-	if err := sendFrames(p.conn, msg); err != nil {
-		p.conn.Close()
-		return err
+	// Combine envelope frames (incl. empty delimiter) with payload into one
+	// message. sendFrames in writeLoop sets More=true on all but the last frame.
+	combined := append(Message(env), msg...)
+	if !p.send(combined, s.base.closeCh) {
+		return ErrClosed
 	}
 	return nil
 }
