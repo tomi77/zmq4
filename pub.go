@@ -9,8 +9,6 @@ import (
 	"github.com/tomi77/zmq4/internal/wire"
 )
 
-const pubOutChCap = 64
-
 // pubPipe is one connected SUB/XSUB peer on a PUB or XPUB socket.
 // It has two goroutines: subReader (reads subscription frames from the peer
 // and updates the filter) and writer (drains outCh and sends to the wire).
@@ -25,10 +23,10 @@ type pubPipe struct {
 	subNotify chan<- Message // non-nil for XPUB: subscription frames go here
 }
 
-func newPubPipe(c *conn.Conn, subNotify chan<- Message) *pubPipe {
+func newPubPipe(c *conn.Conn, subNotify chan<- Message, sndHWM int) *pubPipe {
 	return &pubPipe{
 		conn:      c,
-		outCh:     make(chan Message, pubOutChCap),
+		outCh:     make(chan Message, sndHWM),
 		subNotify: subNotify,
 	}
 }
@@ -162,11 +160,11 @@ type PUB struct {
 // NewPUB creates a new PUB socket with the given options.
 func NewPUB(opts ...Option) *PUB {
 	s := &PUB{
-		base:     newSocketBase(newSocketConfig(opts)),
+		base:     newSocketBase(newSocketConfig(append([]Option{withSndOverflow(Drop)}, opts...))),
 		pubPipes: newPubPipeSet(),
 	}
 	s.base.postHandshake = func(c *conn.Conn) error {
-		pp := newPubPipe(c, nil)
+		pp := newPubPipe(c, nil, s.base.cfg.sndHWM)
 		pp.wg.Add(2)
 		s.pubPipes.add(pp)
 		go pp.subReader(s.pubPipes)

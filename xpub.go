@@ -19,12 +19,12 @@ type XPUB struct {
 // NewXPUB creates a new XPUB socket.
 func NewXPUB(opts ...Option) *XPUB {
 	s := &XPUB{
-		base:     newSocketBase(newSocketConfig(opts)),
+		base:     newSocketBase(newSocketConfig(append([]Option{withSndOverflow(Drop)}, opts...))),
 		pubPipes: newPubPipeSet(),
 		subCh:    make(chan Message, xpubSubChCap),
 	}
 	s.base.postHandshake = func(c *conn.Conn) error {
-		pp := newPubPipe(c, s.subCh)
+		pp := newPubPipe(c, s.subCh, s.base.cfg.sndHWM)
 		pp.wg.Add(2)
 		s.pubPipes.add(pp)
 		go pp.subReader(s.pubPipes)
