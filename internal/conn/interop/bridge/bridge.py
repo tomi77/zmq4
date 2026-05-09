@@ -42,6 +42,8 @@ SOCKET_TYPES = {
     "SUB":    zmq.SUB,
     "XPUB":   zmq.XPUB,
     "XSUB":   zmq.XSUB,
+    "PUSH":   zmq.PUSH,
+    "PULL":   zmq.PULL,
 }
 
 
@@ -126,6 +128,26 @@ def run_scenario(sock: zmq.Socket, scenario: str, socket_type: str) -> None:
             sock.send(b"INTEROP")
         elif scenario == "multipart":
             sock.send_multipart([b"INTEROP", b"INTEROP_P1", b"INTEROP_P2"])
+        else:
+            raise ValueError(f"unknown scenario {scenario!r}")
+        return
+
+    if socket_type == "PUSH":
+        # PUSH: active sender — always initiates.
+        if scenario == "single":
+            sock.send(b"INTEROP")
+        elif scenario == "multipart":
+            sock.send_multipart([b"INTEROP_P1", b"INTEROP_P2", b"INTEROP_P3"])
+        else:
+            raise ValueError(f"unknown scenario {scenario!r}")
+        return
+
+    if socket_type == "PULL":
+        # PULL: passive receiver — waits for one message.
+        if scenario == "single":
+            sock.recv()
+        elif scenario == "multipart":
+            sock.recv_multipart()
         else:
             raise ValueError(f"unknown scenario {scenario!r}")
         return
