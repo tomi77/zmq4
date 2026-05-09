@@ -8,21 +8,23 @@ import (
 	"github.com/tomi77/zmq4/internal/wire"
 )
 
-const pipeInChCap = 64
-
 // pipe represents one live ZMTP connection inside a socket.
 type pipe struct {
 	conn     *conn.Conn
 	identity []byte    // peer identity; stable after construction
 	inCh     chan Message
+	outCh    chan Message   // send queue; capacity = sndHWM
+	overflow OverflowPolicy
 	wg       sync.WaitGroup
 }
 
-func newPipe(c *conn.Conn, identity []byte) *pipe {
+func newPipe(c *conn.Conn, identity []byte, sndHWM, rcvHWM int, overflow OverflowPolicy) *pipe {
 	return &pipe{
 		conn:     c,
 		identity: identity,
-		inCh:     make(chan Message, pipeInChCap),
+		inCh:     make(chan Message, rcvHWM),
+		outCh:    make(chan Message, sndHWM),
+		overflow: overflow,
 	}
 }
 

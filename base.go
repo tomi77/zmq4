@@ -144,7 +144,7 @@ func (sb *socketBase) addConn(c *conn.Conn, localSocketType string) error {
 		return sb.postHandshake(c)
 	}
 	identity := peerIdentity(meta)
-	p := newPipe(c, identity)
+	p := newPipe(c, identity, sb.cfg.sndHWM, sb.cfg.rcvHWM, sb.cfg.sndOverflow)
 	sb.pipes.add(p)
 	p.start(sb.pipes, sb.closeCh)
 	return nil

@@ -31,7 +31,7 @@ func (s *PAIR) exclusivePeer(c *conn.Conn) error {
 		return ErrPairAlreadyConnected
 	}
 	identity := peerIdentity(c.PeerMetadata())
-	p := newPipe(c, identity)
+	p := newPipe(c, identity, s.base.cfg.sndHWM, s.base.cfg.rcvHWM, s.base.cfg.sndOverflow)
 	s.base.pipes.add(p)
 	p.start(s.base.pipes, s.base.closeCh)
 	return nil

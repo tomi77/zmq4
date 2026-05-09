@@ -32,7 +32,7 @@ func (s *XSUB) onNewConn(c *conn.Conn) error {
 		}
 	}
 	identity := peerIdentity(c.PeerMetadata())
-	p := newPipe(c, identity)
+	p := newPipe(c, identity, s.base.cfg.sndHWM, s.base.cfg.rcvHWM, s.base.cfg.sndOverflow)
 	s.base.pipes.add(p)
 	p.start(s.base.pipes, s.base.closeCh)
 	return nil
