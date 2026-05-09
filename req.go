@@ -49,23 +49,17 @@ func (s *REQ) Send(ctx context.Context, msg Message) error {
 		return err
 	}
 
-	// Send empty delimiter then payload.
-	if err := p.conn.WriteFrame(emptyDelimiter); err != nil {
+	// Prepend the empty delimiter frame as the first part of the message.
+	// writeLoop sends all parts in one uninterrupted sequence via sendFrames.
+	combined := make(Message, 1+len(msg))
+	combined[0] = nil // empty delimiter (zero-length frame)
+	copy(combined[1:], msg)
+	if !p.send(combined, s.base.closeCh) {
 		s.mu.Lock()
 		s.sent = false
 		s.mu.Unlock()
-		return err
+		return ErrClosed
 	}
-	if err := sendFrames(p.conn, msg); err != nil {
-		// Partial write: ZMTP stream is corrupt. Close the connection
-		// to prevent the peer from waiting for a frame that will never arrive.
-		p.conn.Close()
-		s.mu.Lock()
-		s.sent = false
-		s.mu.Unlock()
-		return err
-	}
-
 	s.mu.Lock()
 	s.activePipe = p
 	s.mu.Unlock()
