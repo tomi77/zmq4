@@ -33,12 +33,6 @@ func newPubPipe(c *conn.Conn, subNotify chan<- Message) *pubPipe {
 	}
 }
 
-func (pp *pubPipe) start(ps *pubPipeSet, closeCh <-chan struct{}) {
-	pp.wg.Add(2)
-	go pp.subReader(ps)
-	go pp.writer(closeCh)
-}
-
 func (pp *pubPipe) subReader(ps *pubPipeSet) {
 	defer pp.wg.Done()
 	defer ps.remove(pp)
@@ -173,8 +167,10 @@ func NewPUB(opts ...Option) *PUB {
 	}
 	s.base.postHandshake = func(c *conn.Conn) error {
 		pp := newPubPipe(c, nil)
+		pp.wg.Add(2)
 		s.pubPipes.add(pp)
-		pp.start(s.pubPipes, s.base.closeCh)
+		go pp.subReader(s.pubPipes)
+		go pp.writer(s.base.closeCh)
 		return nil
 	}
 	s.base.closeFn = func() {

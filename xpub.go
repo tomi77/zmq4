@@ -25,8 +25,10 @@ func NewXPUB(opts ...Option) *XPUB {
 	}
 	s.base.postHandshake = func(c *conn.Conn) error {
 		pp := newPubPipe(c, s.subCh)
+		pp.wg.Add(2)
 		s.pubPipes.add(pp)
-		pp.start(s.pubPipes, s.base.closeCh)
+		go pp.subReader(s.pubPipes)
+		go pp.writer(s.base.closeCh)
 		return nil
 	}
 	s.base.closeFn = func() {

@@ -1,10 +1,10 @@
 # 00 — Meta-overview
 
-> **Status:** living document. F1, F2a, F2b, F2c, F3, F4, and F5a complete and
-> tagged (`phase-1-wire-complete`, `phase-2a-null-complete`,
+> **Status:** living document. F1, F2a, F2b, F2c, F3, F4, F5a, and F5b complete
+> and tagged (`phase-1-wire-complete`, `phase-2a-null-complete`,
 > `phase-2b-plain-complete`, `phase-2c-curve-complete`,
 > `phase-3-transport-complete`, `phase-4-conn-complete`,
-> `phase-5a-reqrep-complete`). F5b design approved, implementation pending.
+> `phase-5a-reqrep-complete`, `phase-5b-pubsub-complete`). F5c pending.
 > **Author:** Tomasz Rup
 > **Date:** 2026-05-02 (last updated 2026-05-09)
 
@@ -113,7 +113,7 @@ deferred until all three concrete implementations exist (extracted in F2c).
 | F3 | `03-transports.md` | `tcp`, `ipc`, `inproc` listener/dialer abstractions. | Self-loopback tests (our dialer ↔ our listener). | **Complete** — tagged `phase-3-transport-complete`. |
 | F4 | `04-connection-layer.md` | Wire-up of F1+F2+F3. Handshake, frame stream, error handling. | **First live interop with `libzmq`** (NULL handshake, then PLAIN, then CURVE). | **Complete** — tagged `phase-4-conn-complete`. ZMTP-version-downgrade interop deferred (pyzmq cannot force ZMTP 3.0); covered by unit test on net.Pipe. |
 | F5a | `05a-sockets-reqrep.md` | `REQ`, `REP`, `ROUTER`, `DEALER`. | Interop with `libzmq` REQ/REP patterns. | **Complete** — tagged `phase-5a-reqrep-complete`. |
-| F5b | `05b-sockets-pubsub.md` | `PUB`, `SUB`, `XPUB`, `XSUB`. Topic filtering. | Interop with `libzmq` pub/sub patterns. | Design approved — implementation pending. |
+| F5b | `05b-sockets-pubsub.md` | `PUB`, `SUB`, `XPUB`, `XSUB`. Topic filtering. | Interop with `libzmq` pub/sub patterns. | **Complete** — tagged `phase-5b-pubsub-complete`. |
 | F5c | `05c-sockets-pipeline-pair.md` | `PUSH`, `PULL`, `PAIR`. | Interop with `libzmq` pipeline/pair. | Pending. |
 | F6 | `06-zap-monitoring.md` | ZAP auth, socket monitoring events, HWM tuning, polling. | Interop and full integration. | Pending. |
 

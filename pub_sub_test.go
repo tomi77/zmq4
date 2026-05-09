@@ -249,11 +249,9 @@ func TestSUBCloseUnblocksRecv(t *testing.T) {
 
 	var wg sync.WaitGroup
 	var recvErr error
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		_, recvErr = sub.Recv(ctx)
-	}()
+	})
 
 	time.Sleep(10 * time.Millisecond)
 	sub.Close()
