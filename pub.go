@@ -50,6 +50,9 @@ func (pp *pubPipe) subReader(ps *pubPipeSet) {
 		if len(f.Body) == 0 {
 			continue
 		}
+		if f.Kind != wire.FrameMessage {
+			continue
+		}
 		op, prefix := f.Body[0], append([]byte(nil), f.Body[1:]...)
 		switch op {
 		case 0x01:
@@ -175,10 +178,11 @@ func NewPUB(opts ...Option) *PUB {
 		return nil
 	}
 	s.base.closeFn = func() {
-		for _, pp := range s.pubPipes.all() {
+		pipes := s.pubPipes.all()
+		for _, pp := range pipes {
 			pp.conn.Close()
 		}
-		for _, pp := range s.pubPipes.all() {
+		for _, pp := range pipes {
 			pp.wg.Wait()
 		}
 	}
@@ -210,8 +214,12 @@ func (s *PUB) Send(ctx context.Context, msg Message) error {
 	topic := msg[0]
 	for _, pp := range s.pubPipes.all() {
 		if pp.matches(topic) {
+			copied := make(Message, len(msg))
+			for i, part := range msg {
+				copied[i] = append([]byte(nil), part...)
+			}
 			select {
-			case pp.outCh <- msg:
+			case pp.outCh <- copied:
 			default:
 			}
 		}
