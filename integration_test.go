@@ -42,7 +42,7 @@ func TestIntegration(t *testing.T) {
 	var rows []integRow
 	for _, tr := range []string{"tcp", "ipc", "inproc"} {
 		for _, sec := range []string{"null", "plain", "curve"} {
-			for _, pair := range []string{"reqrep", "dealerrouter", "pubsub", "xpubxsub"} {
+			for _, pair := range []string{"reqrep", "dealerrouter", "pubsub", "xpubxsub", "pushpull", "pair"} {
 				rows = append(rows, integRow{tr, sec, pair})
 			}
 		}
@@ -91,6 +91,10 @@ func runIntegRow(t *testing.T, row integRow) {
 		runPUBSUB(t, ctx, ep, serverOpts, clientOpts)
 	case "xpubxsub":
 		runXPUBXSUB(t, ctx, ep, serverOpts, clientOpts)
+	case "pushpull":
+		runPUSHPULL(t, ctx, ep, serverOpts, clientOpts)
+	case "pair":
+		runPAIR(t, ctx, ep, serverOpts, clientOpts)
 	default:
 		t.Fatalf("unknown pair %q", row.pair)
 	}
@@ -297,5 +301,70 @@ func runXPUBXSUB(t *testing.T, ctx context.Context, ep string, serverOpts, clien
 	}
 	if string(got[0]) != "news-item" {
 		t.Fatalf("want news-item, got %q", got[0])
+	}
+}
+
+func runPUSHPULL(t *testing.T, ctx context.Context, ep string, serverOpts, clientOpts []zmq4.Option) {
+	t.Helper()
+
+	pull := zmq4.NewPULL(serverOpts...)
+	if err := pull.Bind(ctx, ep); err != nil {
+		t.Fatalf("PULL.Bind: %v", err)
+	}
+	defer pull.Close()
+
+	push := zmq4.NewPUSH(clientOpts...)
+	if err := push.Connect(ctx, ep); err != nil {
+		t.Fatalf("PUSH.Connect: %v", err)
+	}
+	defer push.Close()
+
+	if err := push.Send(ctx, zmq4.Message{[]byte("hello")}); err != nil {
+		t.Fatalf("PUSH.Send: %v", err)
+	}
+	got, err := pull.Recv(ctx)
+	if err != nil {
+		t.Fatalf("PULL.Recv: %v", err)
+	}
+	if len(got) == 0 || string(got[0]) != "hello" {
+		t.Fatalf("want hello, got %q", got)
+	}
+}
+
+func runPAIR(t *testing.T, ctx context.Context, ep string, serverOpts, clientOpts []zmq4.Option) {
+	t.Helper()
+
+	a := zmq4.NewPAIR(serverOpts...)
+	if err := a.Bind(ctx, ep); err != nil {
+		t.Fatalf("PAIR.Bind: %v", err)
+	}
+	defer a.Close()
+
+	b := zmq4.NewPAIR(clientOpts...)
+	if err := b.Connect(ctx, ep); err != nil {
+		t.Fatalf("PAIR.Connect: %v", err)
+	}
+	defer b.Close()
+
+	if err := b.Send(ctx, zmq4.Message{[]byte("ping")}); err != nil {
+		t.Fatalf("PAIR b.Send: %v", err)
+	}
+	got, err := a.Recv(ctx)
+	if err != nil {
+		t.Fatalf("PAIR a.Recv: %v", err)
+	}
+	if len(got) == 0 || string(got[0]) != "ping" {
+		t.Fatalf("want ping, got %q", got)
+	}
+
+	if err := a.Send(ctx, zmq4.Message{[]byte("pong")}); err != nil {
+		t.Fatalf("PAIR a.Send: %v", err)
+	}
+	reply, err := b.Recv(ctx)
+	if err != nil {
+		t.Fatalf("PAIR b.Recv: %v", err)
+	}
+	if len(reply) == 0 || string(reply[0]) != "pong" {
+		t.Fatalf("want pong, got %q", reply)
 	}
 }
