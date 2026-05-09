@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/tomi77/zmq4/internal/security/plain"
+	"github.com/tomi77/zmq4/zap"
 )
 
 func TestNewSocketConfigDefaults(t *testing.T) {
@@ -149,5 +150,21 @@ func TestWithSndHWMPolicyOverridesInternal(t *testing.T) {
 	cfg := newSocketConfig([]Option{withSndOverflow(Drop), WithSndHWMPolicy(Block)})
 	if cfg.sndOverflow != Block {
 		t.Fatalf("got %v, want Block", cfg.sndOverflow)
+	}
+}
+
+func TestWithZAPDomainSetsConfig(t *testing.T) {
+	h := zap.HandlerFunc(func(r zap.Request) (zap.Reply, error) {
+		return zap.Reply{StatusCode: zap.StatusOK}, nil
+	})
+	router := zap.NewRouter(h)
+	defer router.Close()
+
+	cfg := newSocketConfig([]Option{WithZAPDomain(router, "test-domain")})
+	if cfg.zapCaller == nil {
+		t.Fatal("zapCaller = nil, want non-nil")
+	}
+	if cfg.zapDomain != "test-domain" {
+		t.Fatalf("zapDomain = %q, want %q", cfg.zapDomain, "test-domain")
 	}
 }

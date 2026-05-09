@@ -33,3 +33,8 @@ type Reply struct {
 	UserID     string            // application-level user identifier (may be empty)
 	Metadata   map[string]string // additional properties merged into PeerMetadata()
 }
+
+// HandlerFunc adapts a function to the Handler interface.
+type HandlerFunc func(r Request) (Reply, error)
+
+func (f HandlerFunc) Authenticate(r Request) (Reply, error) { return f(r) }

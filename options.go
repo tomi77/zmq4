@@ -9,6 +9,7 @@ import (
 	"github.com/tomi77/zmq4/internal/security/null"
 	"github.com/tomi77/zmq4/internal/security/plain"
 	"github.com/tomi77/zmq4/internal/wire"
+	zmqzap "github.com/tomi77/zmq4/zap"
 )
 
 // OverflowPolicy specifies what happens when a pipe's send queue (SNDHWM) is full.
@@ -35,6 +36,8 @@ type socketConfig struct {
 	sndHWM           int            // outbound pipe queue capacity; default 1000
 	rcvHWM           int            // inbound pipe queue capacity; default 1000
 	sndOverflow      OverflowPolicy // behaviour when sndHWM is reached; default Block
+	zapCaller        security.ZAPCaller // non-nil when WithZAPDomain is used
+	zapDomain        string
 }
 
 // localMeta returns the metadata this socket advertises in handshake as
@@ -221,4 +224,19 @@ func WithSndHWMPolicy(p OverflowPolicy) Option {
 // (e.g. NewPUB) to set a type-appropriate default before user opts are applied.
 func withSndOverflow(p OverflowPolicy) Option {
 	return func(cfg *socketConfig) { cfg.sndOverflow = p }
+}
+
+// WithZAPDomain configures ZAP authentication for this socket's server side.
+// r must be started (via zap.NewRouter) before passing it here, and must
+// outlive the socket. domain is a string identifying the security domain
+// sent to the ZAP handler; use "" for the default domain.
+//
+// WithZAPDomain is additive: it may be combined with WithPLAINServer,
+// WithCURVEServer, or WithNULL (the default). When ZAP is configured, it
+// takes precedence over any local Authenticator / Authorizer callback.
+func WithZAPDomain(r *zmqzap.Router, domain string) Option {
+	return func(cfg *socketConfig) {
+		cfg.zapCaller = zmqzap.NewClient(r)
+		cfg.zapDomain = domain
+	}
 }

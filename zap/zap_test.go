@@ -7,14 +7,9 @@ import (
 	zmqzap "github.com/tomi77/zmq4/zap"
 )
 
-// handlerFunc is a test helper that adapts a function to the Handler interface.
-type handlerFunc func(r zmqzap.Request) (zmqzap.Reply, error)
-
-func (f handlerFunc) Authenticate(r zmqzap.Request) (zmqzap.Reply, error) { return f(r) }
-
 func TestRouterCallsHandler(t *testing.T) {
 	called := make(chan zmqzap.Request, 1)
-	h := handlerFunc(func(r zmqzap.Request) (zmqzap.Reply, error) {
+	h := zmqzap.HandlerFunc(func(r zmqzap.Request) (zmqzap.Reply, error) {
 		called <- r
 		return zmqzap.Reply{StatusCode: zmqzap.StatusOK}, nil
 	})
@@ -42,7 +37,7 @@ func TestRouterCallsHandler(t *testing.T) {
 }
 
 func TestRouterReturnsReplyFields(t *testing.T) {
-	h := handlerFunc(func(r zmqzap.Request) (zmqzap.Reply, error) {
+	h := zmqzap.HandlerFunc(func(r zmqzap.Request) (zmqzap.Reply, error) {
 		return zmqzap.Reply{
 			StatusCode: zmqzap.StatusOK,
 			StatusText: "OK",
@@ -70,7 +65,7 @@ func TestRouterReturnsReplyFields(t *testing.T) {
 }
 
 func TestRouterDenyReturns400(t *testing.T) {
-	h := handlerFunc(func(r zmqzap.Request) (zmqzap.Reply, error) {
+	h := zmqzap.HandlerFunc(func(r zmqzap.Request) (zmqzap.Reply, error) {
 		return zmqzap.Reply{StatusCode: zmqzap.StatusDenied, StatusText: "no"}, nil
 	})
 	r := zmqzap.NewRouter(h)
@@ -87,7 +82,7 @@ func TestRouterDenyReturns400(t *testing.T) {
 }
 
 func TestClientOnClosedRouterReturnsErr(t *testing.T) {
-	h := handlerFunc(func(r zmqzap.Request) (zmqzap.Reply, error) {
+	h := zmqzap.HandlerFunc(func(r zmqzap.Request) (zmqzap.Reply, error) {
 		return zmqzap.Reply{StatusCode: zmqzap.StatusOK}, nil
 	})
 	r := zmqzap.NewRouter(h)
@@ -102,7 +97,7 @@ func TestClientOnClosedRouterReturnsErr(t *testing.T) {
 
 func TestRouterPLAINCredentials(t *testing.T) {
 	var gotCreds [][]byte
-	h := handlerFunc(func(r zmqzap.Request) (zmqzap.Reply, error) {
+	h := zmqzap.HandlerFunc(func(r zmqzap.Request) (zmqzap.Reply, error) {
 		gotCreds = r.Credentials
 		return zmqzap.Reply{StatusCode: zmqzap.StatusOK}, nil
 	})

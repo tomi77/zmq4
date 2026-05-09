@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/tomi77/zmq4/internal/conn"
+	"github.com/tomi77/zmq4/internal/security"
 	"github.com/tomi77/zmq4/internal/transport"
 )
 
@@ -91,6 +92,14 @@ func (sb *socketBase) doServerHandshake(raw net.Conn, socketType string) {
 	if err != nil {
 		raw.Close()
 		return
+	}
+	if sb.cfg.zapCaller != nil {
+		if zc, ok := mech.(security.ZAPConfigurer); ok {
+			zc.ConfigureZAP(sb.cfg.zapCaller, sb.cfg.zapDomain)
+		}
+	}
+	if pas, ok := mech.(security.PeerAddrSetter); ok {
+		pas.SetPeerAddr(raw.RemoteAddr().String())
 	}
 	c, err := conn.ServerHandshake(hsCtx, raw, mech)
 	if err != nil {
