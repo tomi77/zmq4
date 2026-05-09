@@ -219,6 +219,3 @@ func sendFrames(c *conn.Conn, msg Message) error {
 	}
 	return nil
 }
-
-// emptyDelimiter is the zero-length FrameMessage used as REQ envelope delimiter.
-var emptyDelimiter = wire.Frame{Kind: wire.FrameMessage, More: true, Body: nil}
