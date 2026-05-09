@@ -17,16 +17,24 @@
 //   - [XPUB] — extended publish (like PUB; Recv returns subscription frames)
 //   - [XSUB] — extended subscribe (like SUB; Send forwards raw sub frames)
 //
+// Pipeline pattern (RFC 30):
+//
+//   - [PUSH] — push socket (round-robin send; blocks until a peer is ready)
+//   - [PULL] — pull socket (fair-queue recv; no send)
+//
+// Exclusive-pair pattern (RFC 31):
+//
+//   - [PAIR] — exclusive-pair socket (single peer; bidirectional)
+//
 // # Creating a socket
 //
-//	pub := zmq4.NewPUB(zmq4.WithNULL())
-//	if err := pub.Bind(ctx, "tcp://127.0.0.1:5555"); err != nil { ... }
-//	defer pub.Close()
+//	push := zmq4.NewPUSH()
+//	if err := push.Bind(ctx, "tcp://127.0.0.1:5555"); err != nil { ... }
+//	defer push.Close()
 //
-//	sub := zmq4.NewSUB()
-//	if err := sub.Connect(ctx, "tcp://127.0.0.1:5555"); err != nil { ... }
-//	sub.Subscribe([]byte("topic"))
-//	msg, err := sub.Recv(ctx)
+//	pull := zmq4.NewPULL()
+//	if err := pull.Connect(ctx, "tcp://127.0.0.1:5555"); err != nil { ... }
+//	msg, err := pull.Recv(ctx)
 //
 // # Security
 //
