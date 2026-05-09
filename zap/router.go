@@ -2,6 +2,10 @@ package zap
 
 import "sync"
 
+// reqBufSize caps concurrent in-flight ZAP requests. One per handshake goroutine;
+// the buffer absorbs bursts during simultaneous incoming connections.
+const reqBufSize = 16
+
 // zapEnvelope carries a request and its reply channel through the Router loop.
 type zapEnvelope struct {
 	req     Request
@@ -27,7 +31,7 @@ type Router struct {
 func NewRouter(h Handler) *Router {
 	r := &Router{
 		handler: h,
-		reqCh:   make(chan zapEnvelope, 16),
+		reqCh:   make(chan zapEnvelope, reqBufSize),
 		closeCh: make(chan struct{}),
 	}
 	r.wg.Add(1)

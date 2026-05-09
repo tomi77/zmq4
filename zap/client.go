@@ -44,6 +44,9 @@ func (c *Client) Authenticate(domain, address, identity, mechanism string, crede
 	if dispErr := c.router.dispatch(env); dispErr != nil {
 		return "", "", nil, dispErr
 	}
+	// Select on both: if the router closes after dispatch succeeded but before
+	// the loop goroutine replies, closeCh unblocks the caller with ErrRouterClosed
+	// rather than blocking forever. Either outcome is correct during shutdown.
 	var result zapResult
 	select {
 	case result = <-replyCh:
