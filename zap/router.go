@@ -52,15 +52,7 @@ func (r *Router) loop() {
 			reply, err := r.handler.Authenticate(env.req)
 			env.replyCh <- zapResult{reply: reply, err: err}
 		case <-r.closeCh:
-			// Drain requests that arrived before shutdown to unblock callers.
-			for {
-				select {
-				case env := <-r.reqCh:
-					env.replyCh <- zapResult{err: ErrRouterClosed}
-				default:
-					return
-				}
-			}
+			return
 		}
 	}
 }

@@ -44,7 +44,12 @@ func (c *Client) Authenticate(domain, address, identity, mechanism string, crede
 	if dispErr := c.router.dispatch(env); dispErr != nil {
 		return "", "", nil, dispErr
 	}
-	result := <-replyCh
+	var result zapResult
+	select {
+	case result = <-replyCh:
+	case <-c.router.closeCh:
+		return "", "", nil, ErrRouterClosed
+	}
 	if result.err != nil {
 		return "", "", nil, result.err
 	}
