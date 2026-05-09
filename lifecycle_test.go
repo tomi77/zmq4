@@ -110,3 +110,59 @@ func TestIncompatiblePeerRejected(t *testing.T) {
 		t.Fatalf("want ErrIncompatiblePeer for REP→REP, got %v", err)
 	}
 }
+
+func TestPUBCloseUnblocksSend(t *testing.T) {
+	pub := zmq4.NewPUB()
+	pub.Close()
+	err := pub.Send(context.Background(), zmq4.Message{[]byte("x")})
+	if !errors.Is(err, zmq4.ErrClosed) {
+		t.Fatalf("want ErrClosed, got %v", err)
+	}
+}
+
+func TestSUBSubscribeAfterClose(t *testing.T) {
+	sub := zmq4.NewSUB()
+	sub.Close()
+	err := sub.Subscribe([]byte("x"))
+	if !errors.Is(err, zmq4.ErrClosed) {
+		t.Fatalf("want ErrClosed, got %v", err)
+	}
+}
+
+func TestXPUBCloseUnblocksRecv(t *testing.T) {
+	xpub := zmq4.NewXPUB()
+	ctx := context.Background()
+
+	var wg sync.WaitGroup
+	var recvErr error
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_, recvErr = xpub.Recv(ctx)
+	}()
+
+	time.Sleep(10 * time.Millisecond)
+	xpub.Close()
+	wg.Wait()
+	if !errors.Is(recvErr, zmq4.ErrClosed) {
+		t.Fatalf("want ErrClosed, got %v", recvErr)
+	}
+}
+
+func TestIncompatiblePeerPUBtoREP(t *testing.T) {
+	ep := inprocEP(t)
+	ctx := newCtx(t)
+
+	rep := zmq4.NewREP()
+	if err := rep.Bind(ctx, ep); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { rep.Close() })
+
+	pub := zmq4.NewPUB()
+	t.Cleanup(func() { pub.Close() })
+	err := pub.Connect(ctx, ep)
+	if !errors.Is(err, zmq4.ErrIncompatiblePeer) {
+		t.Fatalf("want ErrIncompatiblePeer for PUB→REP, got %v", err)
+	}
+}
