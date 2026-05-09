@@ -20,6 +20,9 @@ var compatiblePeers = map[string]map[string]bool{
 	"SUB":    {"PUB": true, "XPUB": true},
 	"XPUB":   {"SUB": true, "XSUB": true},
 	"XSUB":   {"PUB": true, "XPUB": true},
+	"PUSH":   {"PULL": true},
+	"PULL":   {"PUSH": true},
+	"PAIR":   {"PAIR": true},
 }
 
 // socketBase holds shared goroutine and lifecycle machinery for all socket
