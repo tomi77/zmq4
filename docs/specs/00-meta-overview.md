@@ -1,11 +1,11 @@
 # 00 — Meta-overview
 
-> **Status:** living document. F1, F2a, F2b, F2c, F3, F4, F5a, F5b, and F5c complete
+> **Status:** living document. F1, F2a, F2b, F2c, F3, F4, F5a, F5b, F5c, and F6a complete
 > and tagged (`phase-1-wire-complete`, `phase-2a-null-complete`,
 > `phase-2b-plain-complete`, `phase-2c-curve-complete`,
 > `phase-3-transport-complete`, `phase-4-conn-complete`,
 > `phase-5a-reqrep-complete`, `phase-5b-pubsub-complete`,
-> `phase-5c-pipeline-pair-complete`). F6 pending.
+> `phase-5c-pipeline-pair-complete`, `phase-6a-hwm-complete`). F6b pending.
 > **Author:** Tomasz Rup
 > **Date:** 2026-05-02 (last updated 2026-05-09)
 
@@ -116,7 +116,8 @@ deferred until all three concrete implementations exist (extracted in F2c).
 | F5a | `05a-sockets-reqrep.md` | `REQ`, `REP`, `ROUTER`, `DEALER`. | Interop with `libzmq` REQ/REP patterns. | **Complete** — tagged `phase-5a-reqrep-complete`. |
 | F5b | `05b-sockets-pubsub.md` | `PUB`, `SUB`, `XPUB`, `XSUB`. Topic filtering. | Interop with `libzmq` pub/sub patterns. | **Complete** — tagged `phase-5b-pubsub-complete`. |
 | F5c | `05c-sockets-pipeline-pair.md` | `PUSH`, `PULL`, `PAIR`. | Interop with `libzmq` pipeline/pair. | **Complete** — tagged `phase-5c-pipeline-pair-complete`. |
-| F6 | `06-zap-monitoring.md` | ZAP auth, socket monitoring events, HWM tuning, polling. | Interop and full integration. | Pending. |
+| F6a | — | Configurable SNDHWM / RCVHWM with Block/Drop policies. | Integration + unit. | **Complete** — tagged `phase-6a-hwm-complete`. |
+| F6b | `06-zap-monitoring.md` | ZAP auth, socket monitoring events, polling. | Interop and full integration. | Pending. |
 
 Each phase is gated: **the next phase does not start until the previous one
 is merged with all its tests passing.**
