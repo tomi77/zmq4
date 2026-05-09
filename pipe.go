@@ -28,11 +28,12 @@ func newPipe(c *conn.Conn, identity []byte, sndHWM, rcvHWM int, overflow Overflo
 	}
 }
 
-// start launches the reader goroutine. closeCh is closed by the socket
-// to stop all reader goroutines on Close.
+// start launches the reader and writer goroutines. closeCh is closed by the
+// socket to stop all goroutines on Close.
 func (p *pipe) start(ps *pipeSet, closeCh <-chan struct{}) {
-	p.wg.Add(1)
+	p.wg.Add(2)
 	go p.readLoop(ps, closeCh)
+	go p.writeLoop(closeCh)
 }
 
 // readLoop reads multipart messages from the conn and delivers them to
@@ -59,6 +60,45 @@ func (p *pipe) readLoop(ps *pipeSet, closeCh <-chan struct{}) {
 				return
 			}
 			msg = nil
+		}
+	}
+}
+
+// writeLoop drains outCh and writes messages to conn. Exits on write error
+// (closing the connection so readLoop also exits) or when closeCh is closed.
+func (p *pipe) writeLoop(closeCh <-chan struct{}) {
+	defer p.wg.Done()
+	for {
+		select {
+		case msg := <-p.outCh:
+			if err := sendFrames(p.conn, msg); err != nil {
+				p.conn.Close()
+				return
+			}
+		case <-closeCh:
+			return
+		}
+	}
+}
+
+// send enqueues msg for delivery according to the pipe's overflow policy.
+// Returns true if the message was queued, false if the socket is closing (Block)
+// or the queue is full (Drop).
+func (p *pipe) send(msg Message, closeCh <-chan struct{}) bool {
+	switch p.overflow {
+	case Drop:
+		select {
+		case p.outCh <- msg:
+			return true
+		default:
+			return false
+		}
+	default: // Block
+		select {
+		case p.outCh <- msg:
+			return true
+		case <-closeCh:
+			return false
 		}
 	}
 }

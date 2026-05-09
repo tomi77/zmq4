@@ -3,6 +3,7 @@ package zmq4
 import (
 	"net"
 	"testing"
+	"time"
 )
 
 func TestPipeSetAddRemove(t *testing.T) {
@@ -92,5 +93,66 @@ func TestPipeSndHWMCapacity(t *testing.T) {
 	p := newPipe(nil, nil, 13, 1000, Block)
 	if cap(p.outCh) != 13 {
 		t.Fatalf("outCh capacity: got %d, want 13", cap(p.outCh))
+	}
+}
+
+func TestPipeSendBlock(t *testing.T) {
+	// outCh capacity 1; second send blocks until first is drained.
+	closeCh := make(chan struct{})
+	defer close(closeCh)
+
+	p := newPipe(nil, nil, 1, 1000, Block)
+	p.outCh <- Message{[]byte("first")} // fill the queue manually
+
+	sent := make(chan bool, 1)
+	go func() {
+		sent <- p.send(Message{[]byte("second")}, closeCh)
+	}()
+
+	select {
+	case <-sent:
+		t.Fatal("send should have blocked")
+	case <-time.After(20 * time.Millisecond):
+		// correct: still blocking
+	}
+
+	// Drain the queue — unblocks the goroutine.
+	<-p.outCh
+	select {
+	case ok := <-sent:
+		if !ok {
+			t.Fatal("send returned false, want true")
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("send did not unblock after drain")
+	}
+}
+
+func TestPipeSendDrop(t *testing.T) {
+	closeCh := make(chan struct{})
+	defer close(closeCh)
+
+	p := newPipe(nil, nil, 1, 1000, Drop)
+	p.outCh <- Message{[]byte("first")} // fill the queue
+
+	ok := p.send(Message{[]byte("second")}, closeCh)
+	if ok {
+		t.Fatal("send with Drop policy on full queue should return false")
+	}
+	if len(p.outCh) != 1 {
+		t.Fatalf("outCh len: got %d, want 1 (original message still there)", len(p.outCh))
+	}
+}
+
+func TestPipeSendClosedSocket(t *testing.T) {
+	closeCh := make(chan struct{})
+	close(closeCh) // already closed
+
+	p := newPipe(nil, nil, 1, 1000, Block)
+	p.outCh <- Message{[]byte("fill")} // fill so Block would normally block
+
+	ok := p.send(Message{[]byte("msg")}, closeCh)
+	if ok {
+		t.Fatal("send to closed socket should return false")
 	}
 }
