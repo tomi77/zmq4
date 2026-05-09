@@ -50,7 +50,10 @@ func (s *ROUTER) Send(ctx context.Context, msg Message) error {
 	if p == nil {
 		return fmt.Errorf("%w: identity %x", ErrNoRoute, msg[0])
 	}
-	return sendFrames(p.conn, msg[1:])
+	if !p.send(msg[1:], s.base.closeCh) {
+		return ErrClosed
+	}
+	return nil
 }
 
 func (s *ROUTER) Close() error {

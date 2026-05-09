@@ -27,7 +27,10 @@ func (s *PUSH) Send(ctx context.Context, msg Message) error {
 	if err != nil {
 		return err
 	}
-	return sendFrames(p.conn, msg)
+	if !p.send(msg, s.base.closeCh) {
+		return ErrClosed
+	}
+	return nil
 }
 
 func (s *PUSH) Close() error {

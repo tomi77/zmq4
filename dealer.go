@@ -25,7 +25,10 @@ func (s *DEALER) Send(ctx context.Context, msg Message) error {
 	if err != nil {
 		return err
 	}
-	return sendFrames(p.conn, msg)
+	if !p.send(msg, s.base.closeCh) {
+		return ErrClosed
+	}
+	return nil
 }
 
 func (s *DEALER) Recv(ctx context.Context) (Message, error) {
