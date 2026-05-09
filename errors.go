@@ -9,4 +9,5 @@ var (
 	ErrIncompatiblePeer = errors.New("zmq4: incompatible peer socket type")
 	ErrSecurityMismatch = errors.New("zmq4: security option not valid for this role")
 	ErrNoIdentity       = errors.New("zmq4: ROUTER Send requires non-empty msg[0]")
+	ErrNoTopic          = errors.New("zmq4: PUB/XPUB Send requires at least one frame (topic)")
 )
