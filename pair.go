@@ -27,7 +27,7 @@ func NewPAIR(opts ...Option) *PAIR {
 func (s *PAIR) exclusivePeer(c *conn.Conn) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.base.pipes.all()) > 0 {
+	if s.base.pipes.len() > 0 {
 		return ErrPairAlreadyConnected
 	}
 	identity := peerIdentity(c.PeerMetadata())
