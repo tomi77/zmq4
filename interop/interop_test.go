@@ -46,7 +46,7 @@ type interopRow struct {
 func buildMatrix() []interopRow {
 	var rows []interopRow
 	for _, dir := range []fixture.Role{fixture.RoleDialer, fixture.RoleListener} {
-		for _, pair := range []string{"reqrep", "dealerrouter", "pubsub", "xpubxsub"} {
+		for _, pair := range []string{"reqrep", "dealerrouter", "pubsub", "xpubxsub", "pushpull", "pair"} {
 			for _, mech := range []fixture.Mechanism{fixture.MechNULL, fixture.MechPLAIN, fixture.MechCURVE} {
 				for _, scheme := range []string{"tcp", "ipc"} {
 					for _, sc := range []fixture.Scenario{fixture.ScenarioSingle, fixture.ScenarioMultipart} {
@@ -56,7 +56,7 @@ func buildMatrix() []interopRow {
 			}
 		}
 	}
-	return rows // 2×4×3×2×2 = 96
+	return rows // 2×6×3×2×2 = 144
 }
 
 // goSocketType returns the Go socket type and the bridge socket type for a row.
@@ -85,6 +85,14 @@ func socketTypeNames(row interopRow) (goType, bridgeType string) {
 		return "XSUB", "XPUB" // Go=XSUB dials, bridge=XPUB listens
 	case "xpubxsub+listener":
 		return "XPUB", "XSUB" // Go=XPUB listens, bridge=XSUB dials
+	case "pushpull+dialer":
+		return "PUSH", "PULL" // Go=PUSH dials, bridge=PULL listens
+	case "pushpull+listener":
+		return "PULL", "PUSH" // Go=PULL listens, bridge=PUSH dials
+	case "pair+dialer":
+		return "PAIR", "PAIR" // Go=PAIR dials, bridge=PAIR listens
+	case "pair+listener":
+		return "PAIR", "PAIR" // Go=PAIR listens, bridge=PAIR dials
 	}
 	panic("unhandled pair+dir: " + row.pair + "+" + string(row.dir))
 }
@@ -278,6 +286,12 @@ func runGoSocket(t *testing.T, ctx context.Context, row interopRow, ep string, o
 		runGoXPUB(t, ctx, ep, opts, row.scenario, dial)
 	case "XSUB":
 		runGoXSUB(t, ctx, ep, opts, row.scenario, dial)
+	case "PUSH":
+		runGoPUSH(t, ctx, ep, opts, row.scenario, dial)
+	case "PULL":
+		runGoPULL(t, ctx, ep, opts, row.scenario, dial)
+	case "PAIR":
+		runGoPAIR(t, ctx, ep, opts, row.scenario, dial)
 	}
 	_ = peer
 }
@@ -501,6 +515,90 @@ func runGoXSUB(t *testing.T, ctx context.Context, ep string, opts goOpts, sc fix
 	}
 	if len(got) == 0 {
 		t.Fatal("XSUB.Recv: got empty message")
+	}
+}
+
+func runGoPUSH(t *testing.T, ctx context.Context, ep string, opts goOpts, sc fixture.Scenario, dial bool) {
+	t.Helper()
+	push := zmq4.NewPUSH(opts.clientOpts...)
+	defer push.Close()
+
+	if dial {
+		if err := push.Connect(ctx, ep); err != nil {
+			t.Fatalf("PUSH.Connect: %v", err)
+		}
+	} else {
+		if err := push.Bind(ctx, ep); err != nil {
+			t.Fatalf("PUSH.Bind: %v", err)
+		}
+	}
+
+	payload := testPayload(sc)
+	if err := push.Send(ctx, payload); err != nil {
+		t.Fatalf("PUSH.Send: %v", err)
+	}
+}
+
+func runGoPULL(t *testing.T, ctx context.Context, ep string, opts goOpts, sc fixture.Scenario, dial bool) {
+	t.Helper()
+	pull := zmq4.NewPULL(opts.serverOpts...)
+	defer pull.Close()
+
+	if dial {
+		if err := pull.Connect(ctx, ep); err != nil {
+			t.Fatalf("PULL.Connect: %v", err)
+		}
+	} else {
+		if err := pull.Bind(ctx, ep); err != nil {
+			t.Fatalf("PULL.Bind: %v", err)
+		}
+	}
+
+	got, err := pull.Recv(ctx)
+	if err != nil {
+		t.Fatalf("PULL.Recv: %v", err)
+	}
+	if len(got) == 0 {
+		t.Fatal("PULL.Recv: got empty message")
+	}
+}
+
+func runGoPAIR(t *testing.T, ctx context.Context, ep string, opts goOpts, sc fixture.Scenario, dial bool) {
+	t.Helper()
+	// PAIR: both sides symmetric; use clientOpts for dialer, serverOpts for listener.
+	var pairOpts []zmq4.Option
+	if dial {
+		pairOpts = opts.clientOpts
+	} else {
+		pairOpts = opts.serverOpts
+	}
+	pair := zmq4.NewPAIR(pairOpts...)
+	defer pair.Close()
+
+	if dial {
+		if err := pair.Connect(ctx, ep); err != nil {
+			t.Fatalf("PAIR.Connect: %v", err)
+		}
+	} else {
+		if err := pair.Bind(ctx, ep); err != nil {
+			t.Fatalf("PAIR.Bind: %v", err)
+		}
+	}
+
+	// Go PAIR always sends first; bridge PAIR always echoes (recv→send in
+	// bridge.py's passive-echo block). This is direction-agnostic: when Go
+	// dials the bridge listens and echoes; when Go listens the bridge dials
+	// and also waits to recv (ZMQ passive-echo applies regardless of role).
+	payload := testPayload(sc)
+	if err := pair.Send(ctx, payload); err != nil {
+		t.Fatalf("PAIR.Send: %v", err)
+	}
+	got, err := pair.Recv(ctx)
+	if err != nil {
+		t.Fatalf("PAIR.Recv: %v", err)
+	}
+	if len(got) == 0 {
+		t.Fatal("PAIR.Recv: got empty message")
 	}
 }
 
