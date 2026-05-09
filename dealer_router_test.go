@@ -185,3 +185,31 @@ func TestROUTERCtxCancel(t *testing.T) {
 		t.Fatalf("want context.Canceled, got %v", err)
 	}
 }
+
+func TestPUSHSmoke(t *testing.T) {
+	ep := inprocEP(t)
+	ctx := newCtx(t)
+
+	pull := zmq4.NewPULL()
+	if err := pull.Bind(ctx, ep); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pull.Close() })
+
+	push := zmq4.NewPUSH()
+	if err := push.Connect(ctx, ep); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { push.Close() })
+
+	if err := push.Send(ctx, zmq4.Message{[]byte("hello")}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := pull.Recv(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got[0]) != "hello" {
+		t.Fatalf("want hello, got %q", got[0])
+	}
+}
