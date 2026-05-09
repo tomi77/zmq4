@@ -84,3 +84,27 @@ type ClientMechanism interface {
 	Mechanism
 	Start() (wire.Command, error)
 }
+
+// ZAPCaller is satisfied by *zap.Client. Server-side mechanisms receive it
+// via ConfigureZAP and call it during the authentication step of the handshake.
+type ZAPCaller interface {
+	// Authenticate sends a ZAP request and returns (statusCode, userID, metadata, err).
+	// statusCode is one of "200", "300", "400", "500" (see zap.Status* constants).
+	// err is non-nil only for transport/handler errors, not for auth failures —
+	// auth failures are expressed via statusCode.
+	Authenticate(domain, address, identity, mechanism string, credentials [][]byte) (statusCode, userID string, metadata wire.Metadata, err error)
+}
+
+// ZAPConfigurer is implemented by server-side mechanisms that support ZAP.
+// base.go calls ConfigureZAP immediately after mechanism creation when the
+// socket was configured with WithZAPDomain.
+type ZAPConfigurer interface {
+	ConfigureZAP(caller ZAPCaller, domain string)
+}
+
+// PeerAddrSetter is implemented by server-side mechanisms to receive the
+// peer's network address before the handshake begins. base.go always calls
+// SetPeerAddr on accepted connections.
+type PeerAddrSetter interface {
+	SetPeerAddr(addr string)
+}
