@@ -95,6 +95,20 @@ func TestReadGreetingPhaseABadSignature(t *testing.T) {
 	}
 }
 
+// TestReadGreetingPhaseALibzmqPadding verifies that the non-zero padding byte
+// sent by libzmq 4.x (byte 8 = 0x01, a ZMTP 2.0 backward-compat marker) is
+// accepted, not rejected as an invalid signature.
+func TestReadGreetingPhaseALibzmqPadding(t *testing.T) {
+	buf := make([]byte, 11)
+	buf[0] = 0xFF
+	buf[8] = 0x01 // libzmq 4.x ZMTP 2.0 compat marker
+	buf[9] = 0x7F
+	buf[10] = 0x03
+	if err := ReadGreetingPhaseA(bytes.NewReader(buf)); err != nil {
+		t.Fatalf("libzmq-style greeting rejected: %v", err)
+	}
+}
+
 func TestReadGreetingPhaseABadVersionMajor(t *testing.T) {
 	bad := make([]byte, 11)
 	bad[0] = 0xFF

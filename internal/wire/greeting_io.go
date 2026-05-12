@@ -29,11 +29,8 @@ func ReadGreetingPhaseA(r io.Reader) error {
 	if hdr[0] != 0xFF || hdr[9] != 0x7F {
 		return fmt.Errorf("%w: got 0x%02X..0x%02X, want 0xFF..0x7F", ErrInvalidSignature, hdr[0], hdr[9])
 	}
-	for i := 1; i < 9; i++ {
-		if hdr[i] != 0 {
-			return fmt.Errorf("%w: byte %d = 0x%02X, want 0x00", ErrInvalidSignature, i, hdr[i])
-		}
-	}
+	// bytes 1-8 are padding; "not significant" per ZMTP spec RFC 23 §3.2.
+	// libzmq 4.x sets byte 8 = 0x01 as a ZMTP 2.0 backward-compat marker.
 	if hdr[10] != 0x03 {
 		return fmt.Errorf("%w: got major %d, want 3", ErrUnsupportedVersion, hdr[10])
 	}
