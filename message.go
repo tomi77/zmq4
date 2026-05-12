@@ -17,3 +17,20 @@ func NewStringMsg(frames ...string) Message {
 	}
 	return msg
 }
+
+// Frames returns the number of frames in the message.
+func (m Message) Frames() int { return len(m) }
+
+// Frame returns the i-th frame. Panics if i is out of range, matching the
+// behaviour of a plain slice index expression.
+func (m Message) Frame(i int) []byte { return m[i] }
+
+// String returns the first frame decoded as a UTF-8 string.
+// Returns "" for an empty message. For multi-frame messages only frame 0
+// is returned.
+func (m Message) String() string {
+	if len(m) == 0 {
+		return ""
+	}
+	return string(m[0])
+}
