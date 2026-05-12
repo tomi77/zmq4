@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
 
 	"github.com/tomi77/zmq4/internal/security"
 	"github.com/tomi77/zmq4/internal/wire"
@@ -26,9 +27,7 @@ type Conn struct {
 	peerMeta wire.Metadata
 
 	writeMu sync.Mutex
-
-	closeMu sync.Mutex
-	closed  bool
+	closed  atomic.Bool
 }
 
 // ReadFrame reads one post-handshake application frame. NOT goroutine-safe.
@@ -72,10 +71,7 @@ func (c *Conn) WriteFrame(f wire.Frame) error {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
 
-	c.closeMu.Lock()
-	closed := c.closed
-	c.closeMu.Unlock()
-	if closed {
+	if c.closed.Load() {
 		return net.ErrClosed
 	}
 
@@ -105,13 +101,9 @@ func (c *Conn) PeerMetadata() wire.Metadata { return c.peerMeta }
 // ZMTP 3.1 has no graceful disconnect handshake; F4 just releases the
 // FD. F5 owns linger semantics for in-flight messages.
 func (c *Conn) Close() error {
-	c.closeMu.Lock()
-	if c.closed {
-		c.closeMu.Unlock()
+	if !c.closed.CompareAndSwap(false, true) {
 		return nil
 	}
-	c.closed = true
-	c.closeMu.Unlock()
 	return c.raw.Close()
 }
 
