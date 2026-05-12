@@ -1,6 +1,7 @@
 package conn
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -403,7 +404,7 @@ func doHandshake(ctx context.Context, raw net.Conn,
 		}
 		c = &Conn{
 			raw:      raw,
-			fr:       wire.NewFrameReader(raw, wire.WithMaxBodySize(cfg.maxFrameBodySize)),
+			fr:       wire.NewFrameReader(bufio.NewReader(raw), wire.WithMaxBodySize(cfg.maxFrameBodySize)),
 			fw:       fw,
 			mech:     mech,
 			peerMeta: peerMeta,

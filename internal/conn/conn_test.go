@@ -1,6 +1,7 @@
 package conn
 
 import (
+	"bufio"
 	"bytes"
 	"errors"
 	"io"
@@ -15,6 +16,28 @@ import (
 	"github.com/tomi77/zmq4/internal/wire"
 )
 
+// countingReader counts underlying Read calls to verify Conn.fr uses bufio batching.
+type countingReader struct {
+	r     io.Reader
+	reads int
+}
+
+func (cr *countingReader) Read(b []byte) (int, error) {
+	cr.reads++
+	return cr.r.Read(b)
+}
+
+// passThroughMech satisfies security.Mechanism pre-completed so tests can
+// construct a Conn without driving a real handshake.
+type passThroughMech struct{}
+
+func (passThroughMech) Receive(wire.Command) (*wire.Command, bool, error) { return nil, true, nil }
+func (passThroughMech) Wrap(f wire.Frame) (wire.Frame, error)             { return f, nil }
+func (passThroughMech) Unwrap(f wire.Frame) (wire.Frame, error)           { return f, nil }
+func (passThroughMech) Done() bool                                         { return true }
+func (passThroughMech) PeerMetadata() wire.Metadata                        { return nil }
+func (passThroughMech) Name() string                                        { return "NULL" }
+
 // newPipeConn builds an unhandshaken *Conn around one end of a net.Pipe
 // for testing the non-handshake surface. The mech is a fresh null state
 // (it is never driven; the conn is post-construction synthetic).
@@ -24,7 +47,7 @@ func newPipeConn(t *testing.T) (*Conn, net.Conn) {
 	cfg := newConfig(nil)
 	c := &Conn{
 		raw:      ours,
-		fr:       wire.NewFrameReader(ours, wire.WithMaxBodySize(cfg.maxFrameBodySize)),
+		fr:       wire.NewFrameReader(bufio.NewReader(ours), wire.WithMaxBodySize(cfg.maxFrameBodySize)),
 		fw:       wire.NewFrameWriter(ours),
 		mech:     null.New(nil),
 		peerMeta: nil,
@@ -440,4 +463,36 @@ func TestPostHandshakeRaceDetectorClean(t *testing.T) {
 	wg.Wait()
 	_ = c.Close()
 	_ = s.Close()
+}
+
+// TestConnFrameReaderBuffersIO asserts that ReadFrame performs at most 2
+// underlying Read calls when all frame bytes are available at once.
+// Without bufio.Reader wrapping, each short frame costs 3 Read calls
+// (flags byte, size byte, body bytes) — 10 frames = 30 Read calls.
+func TestConnFrameReaderBuffersIO(t *testing.T) {
+	var buf bytes.Buffer
+	fw := wire.NewFrameWriter(&buf)
+	for range 10 {
+		if err := fw.WriteFrame(wire.Frame{Kind: wire.FrameMessage, Body: []byte("hello")}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cr := &countingReader{r: &buf}
+	cfg := newConfig(nil)
+	c := &Conn{
+		fr:   wire.NewFrameReader(bufio.NewReader(cr), wire.WithMaxBodySize(cfg.maxFrameBodySize)),
+		mech: passThroughMech{},
+	}
+
+	for range 10 {
+		if _, err := c.ReadFrame(); err != nil {
+			t.Fatalf("ReadFrame: %v", err)
+		}
+	}
+
+	if cr.reads > 2 {
+		t.Fatalf("ReadFrame uses %d underlying Read calls for 10 frames, want ≤2; "+
+			"wrap FrameReader with bufio.NewReader in handshake.go", cr.reads)
+	}
 }
