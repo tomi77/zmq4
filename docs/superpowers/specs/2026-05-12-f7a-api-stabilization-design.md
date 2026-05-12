@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-12
 **Author:** Tomasz Rup
-**Status:** draft (rev 3 — post spec-review fixes)
+**Status:** draft (rev 4 — post spec-review fixes)
 
 ---
 
@@ -54,9 +54,11 @@ call sites) has no `string` equivalent — all `nil` call sites must be migrated
 `""`. Affected call sites: `pub_sub_test.go` (1×), `interop/interop_test.go` (2×),
 `cmd/main.go` (1×, uses `[]byte("")` which migrates to `""`).
 
-**Godoc update:** The comments on `SUB.Subscribe`, `SUB.Unsubscribe`,
-`XSUB.Subscribe`, and `XSUB.Unsubscribe` must be updated to replace references to
-`nil` and `[]byte` with `""` and `string`.
+**Godoc update:** The following comments must be updated to replace references to
+`nil` and `[]byte` with `""` and `string`:
+- Type-level comment on `SUB` (`sub.go`) — `Subscribe(nil) = subscribe-all` → `Subscribe("") = subscribe-all`
+- Method comment on `SUB.Subscribe` — `topic == nil or []byte{} subscribes to all messages` → `topic == "" subscribes to all messages`
+- Method comments on `SUB.Unsubscribe`, `XSUB.Subscribe`, `XSUB.Unsubscribe`
 
 ---
 
