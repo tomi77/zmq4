@@ -247,7 +247,7 @@ func runPUBSUB(t *testing.T, ctx context.Context, ep string, serverOpts, clientO
 	}
 	defer sub.Close()
 
-	if err := sub.Subscribe([]byte("ping")); err != nil {
+	if err := sub.Subscribe("ping"); err != nil {
 		t.Fatalf("Subscribe: %v", err)
 	}
 	time.Sleep(20 * time.Millisecond)
@@ -278,7 +278,7 @@ func runXPUBXSUB(t *testing.T, ctx context.Context, ep string, serverOpts, clien
 	}
 	defer xsub.Close()
 
-	if err := xsub.Subscribe([]byte("news")); err != nil {
+	if err := xsub.Subscribe("news"); err != nil {
 		t.Fatalf("Subscribe: %v", err)
 	}
 
@@ -451,7 +451,7 @@ func TestPUBSndHWMDrop(t *testing.T) {
 	if err := sub.Connect(ctx, endpoint); err != nil {
 		t.Fatal(err)
 	}
-	if err := sub.Subscribe([]byte("")); err != nil {
+	if err := sub.Subscribe(""); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(20 * time.Millisecond) // allow handshake + subscription

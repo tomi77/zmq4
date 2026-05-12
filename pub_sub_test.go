@@ -59,7 +59,7 @@ func TestPUBSUBRoundTrip(t *testing.T) {
 	}
 	t.Cleanup(func() { sub.Close() })
 
-	if err := sub.Subscribe([]byte("hello")); err != nil {
+	if err := sub.Subscribe("hello"); err != nil {
 		t.Fatalf("Subscribe: %v", err)
 	}
 
@@ -124,7 +124,7 @@ func TestSUBSubscribeAll(t *testing.T) {
 	}
 	t.Cleanup(func() { sub.Close() })
 
-	if err := sub.Subscribe(nil); err != nil {
+	if err := sub.Subscribe(""); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(10 * time.Millisecond)
@@ -164,14 +164,14 @@ func TestPUBSUBTopicFilter(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { subA.Close() })
-	subA.Subscribe([]byte("a"))
+	subA.Subscribe("a")
 
 	subB := zmq4.NewSUB()
 	if err := subB.Connect(ctx, ep); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { subB.Close() })
-	subB.Subscribe([]byte("b"))
+	subB.Subscribe("b")
 
 	time.Sleep(20 * time.Millisecond)
 
@@ -217,9 +217,9 @@ func TestSUBRefCounting(t *testing.T) {
 	}
 	t.Cleanup(func() { sub.Close() })
 
-	sub.Subscribe([]byte("x"))
-	sub.Subscribe([]byte("x"))
-	sub.Unsubscribe([]byte("x"))
+	sub.Subscribe("x")
+	sub.Subscribe("x")
+	sub.Unsubscribe("x")
 	time.Sleep(10 * time.Millisecond)
 
 	pub.Send(ctx, zmq4.Message{[]byte("x-msg")})
@@ -231,7 +231,7 @@ func TestSUBRefCounting(t *testing.T) {
 		t.Fatalf("want x-msg, got %q", got[0])
 	}
 
-	sub.Unsubscribe([]byte("x"))
+	sub.Unsubscribe("x")
 	time.Sleep(10 * time.Millisecond)
 
 	pub.Send(ctx, zmq4.Message{[]byte("x-msg2")})

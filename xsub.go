@@ -47,16 +47,16 @@ func (s *XSUB) Connect(ctx context.Context, endpoint string) error {
 }
 
 // Subscribe adds topic and sends a subscribe frame upstream (ref-counted).
-func (s *XSUB) Subscribe(topic []byte) error {
+func (s *XSUB) Subscribe(topic string) error {
 	select {
 	case <-s.base.closeCh:
 		return ErrClosed
 	default:
 	}
-	if !s.state.add(topic) {
+	if !s.state.add([]byte(topic)) {
 		return nil
 	}
-	f := subFrame(0x01, topic)
+	f := subFrame(0x01, []byte(topic))
 	for _, p := range s.base.pipes.all() {
 		p.conn.WriteFrame(f) //nolint:errcheck
 	}
@@ -64,16 +64,16 @@ func (s *XSUB) Subscribe(topic []byte) error {
 }
 
 // Unsubscribe decrements ref count and sends an unsubscribe frame upstream when zero.
-func (s *XSUB) Unsubscribe(topic []byte) error {
+func (s *XSUB) Unsubscribe(topic string) error {
 	select {
 	case <-s.base.closeCh:
 		return ErrClosed
 	default:
 	}
-	if !s.state.remove(topic) {
+	if !s.state.remove([]byte(topic)) {
 		return nil
 	}
-	f := subFrame(0x00, topic)
+	f := subFrame(0x00, []byte(topic))
 	for _, p := range s.base.pipes.all() {
 		p.conn.WriteFrame(f) //nolint:errcheck
 	}

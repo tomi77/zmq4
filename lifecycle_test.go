@@ -123,7 +123,7 @@ func TestPUBCloseUnblocksSend(t *testing.T) {
 func TestSUBSubscribeAfterClose(t *testing.T) {
 	sub := zmq4.NewSUB()
 	sub.Close()
-	err := sub.Subscribe([]byte("x"))
+	err := sub.Subscribe("x")
 	if !errors.Is(err, zmq4.ErrClosed) {
 		t.Fatalf("want ErrClosed, got %v", err)
 	}

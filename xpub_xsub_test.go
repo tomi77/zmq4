@@ -38,7 +38,7 @@ func TestXPUBRecvSubscription(t *testing.T) {
 	}
 	t.Cleanup(func() { xsub.Close() })
 
-	if err := xsub.Subscribe([]byte("foo")); err != nil {
+	if err := xsub.Subscribe("foo"); err != nil {
 		t.Fatalf("Subscribe: %v", err)
 	}
 
@@ -73,14 +73,14 @@ func TestXPUBRecvUnsubscription(t *testing.T) {
 	}
 	t.Cleanup(func() { xsub.Close() })
 
-	xsub.Subscribe([]byte("bar"))
+	xsub.Subscribe("bar")
 	// Consume subscribe frame.
 	sub, _ := xpub.Recv(ctx)
 	if len(sub) == 0 || sub[0][0] != 0x01 {
 		t.Fatalf("expected subscribe frame first, got %v", sub)
 	}
 
-	xsub.Unsubscribe([]byte("bar"))
+	xsub.Unsubscribe("bar")
 	got, err := xpub.Recv(ctx)
 	if err != nil {
 		t.Fatalf("XPUB Recv unsub: %v", err)
@@ -109,7 +109,7 @@ func TestXPUBSendFiltered(t *testing.T) {
 	}
 	t.Cleanup(func() { xsub.Close() })
 
-	xsub.Subscribe([]byte("news"))
+	xsub.Subscribe("news")
 	// Drain subscription frame from XPUB.
 	xpub.Recv(ctx)
 	time.Sleep(10 * time.Millisecond)
@@ -199,7 +199,7 @@ func TestProxyPattern(t *testing.T) {
 	}
 	t.Cleanup(func() { sub.Close() })
 
-	sub.Subscribe([]byte("data"))
+	sub.Subscribe("data")
 
 	// Proxy: XPUB→XSUB (subscriptions) and XSUB→XPUB (data).
 	go func() {

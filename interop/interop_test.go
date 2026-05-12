@@ -448,7 +448,7 @@ func runGoSUB(t *testing.T, ctx context.Context, ep string, opts goOpts, sc fixt
 	}
 
 	// Subscribe to all messages.
-	if err := sub.Subscribe(nil); err != nil {
+	if err := sub.Subscribe(""); err != nil {
 		t.Fatalf("SUB.Subscribe: %v", err)
 	}
 
@@ -505,7 +505,7 @@ func runGoXSUB(t *testing.T, ctx context.Context, ep string, opts goOpts, sc fix
 	}
 
 	// Subscribe to all messages.
-	if err := xsub.Subscribe(nil); err != nil {
+	if err := xsub.Subscribe(""); err != nil {
 		t.Fatalf("XSUB.Subscribe: %v", err)
 	}
 

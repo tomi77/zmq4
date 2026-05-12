@@ -51,7 +51,7 @@ func (ss *subState) all() [][]byte {
 }
 
 // SUB is a subscribe socket. It fair-queues messages from connected PUB/XPUB
-// peers that match at least one active subscription. Subscribe(nil) = subscribe-all.
+// peers that match at least one active subscription. Subscribe("") = subscribe-all.
 type SUB struct {
 	base  socketBase
 	state *subState
@@ -92,17 +92,17 @@ func (s *SUB) Connect(ctx context.Context, endpoint string) error {
 
 // Subscribe adds topic to the subscription list (ref-counted). On the first
 // reference, sends a subscription frame to all connected peers.
-// topic == nil or []byte{} subscribes to all messages.
-func (s *SUB) Subscribe(topic []byte) error {
+// topic == "" subscribes to all messages.
+func (s *SUB) Subscribe(topic string) error {
 	select {
 	case <-s.base.closeCh:
 		return ErrClosed
 	default:
 	}
-	if !s.state.add(topic) {
+	if !s.state.add([]byte(topic)) {
 		return nil
 	}
-	f := subFrame(0x01, topic)
+	f := subFrame(0x01, []byte(topic))
 	for _, p := range s.base.pipes.all() {
 		p.conn.WriteFrame(f) //nolint:errcheck
 	}
@@ -111,16 +111,16 @@ func (s *SUB) Subscribe(topic []byte) error {
 
 // Unsubscribe decrements the ref count for topic. When zero, sends an
 // unsubscription frame to all connected peers.
-func (s *SUB) Unsubscribe(topic []byte) error {
+func (s *SUB) Unsubscribe(topic string) error {
 	select {
 	case <-s.base.closeCh:
 		return ErrClosed
 	default:
 	}
-	if !s.state.remove(topic) {
+	if !s.state.remove([]byte(topic)) {
 		return nil
 	}
-	f := subFrame(0x00, topic)
+	f := subFrame(0x00, []byte(topic))
 	for _, p := range s.base.pipes.all() {
 		p.conn.WriteFrame(f) //nolint:errcheck
 	}
