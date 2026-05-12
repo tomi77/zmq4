@@ -16,6 +16,8 @@ type pipe struct {
 	outCh    chan Message   // send queue; capacity = sndHWM
 	overflow     OverflowPolicy
 	onDisconnect func(addr string) // called when peer drops the connection unexpectedly
+	inReady  chan struct{} // capacity 1; poked by readLoop after each inCh enqueue
+	outReady chan struct{} // capacity 1; poked by writeLoop after each outCh drain
 	wg           sync.WaitGroup
 }
 
@@ -26,6 +28,8 @@ func newPipe(c *conn.Conn, identity []byte, sndHWM, rcvHWM int, overflow Overflo
 		inCh:     make(chan Message, rcvHWM),
 		outCh:    make(chan Message, sndHWM),
 		overflow: overflow,
+		inReady:  make(chan struct{}, 1),
+		outReady: make(chan struct{}, 1),
 	}
 }
 
@@ -67,6 +71,10 @@ func (p *pipe) readLoop(ps *pipeSet, closeCh <-chan struct{}) {
 		if !f.More {
 			select {
 			case p.inCh <- msg:
+				select {
+				case p.inReady <- struct{}{}:
+				default:
+				}
 			case <-closeCh:
 				return
 			}
@@ -85,6 +93,10 @@ func (p *pipe) writeLoop(closeCh <-chan struct{}) {
 			if err := sendFrames(p.conn, msg); err != nil {
 				p.conn.Close()
 				return
+			}
+			select {
+			case p.outReady <- struct{}{}:
+			default:
 			}
 		case <-closeCh:
 			return

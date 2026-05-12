@@ -156,3 +156,13 @@ func TestPipeSendClosedSocket(t *testing.T) {
 		t.Fatal("send to closed socket should return false")
 	}
 }
+
+func TestPipeReadyChannels(t *testing.T) {
+	p := newPipe(nil, nil, 1000, 1000, Block)
+	if cap(p.inReady) != 1 {
+		t.Fatalf("inReady cap: got %d, want 1", cap(p.inReady))
+	}
+	if cap(p.outReady) != 1 {
+		t.Fatalf("outReady cap: got %d, want 1", cap(p.outReady))
+	}
+}
