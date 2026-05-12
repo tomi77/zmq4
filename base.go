@@ -72,8 +72,10 @@ func (sb *socketBase) emit(ev SocketEvent) {
 func (sb *socketBase) bind(ctx context.Context, endpoint, socketType string) error {
 	ln, err := transport.Listen(ctx, endpoint)
 	if err != nil {
+		sb.emit(SocketEvent{Type: EventBindFailed, Endpoint: endpoint, Err: err})
 		return err
 	}
+	sb.emit(SocketEvent{Type: EventListening, Endpoint: endpoint})
 	sb.listenersMu.Lock()
 	sb.listeners = append(sb.listeners, ln)
 	sb.listenersMu.Unlock()
@@ -88,6 +90,12 @@ func (sb *socketBase) acceptLoop(ln net.Listener, socketType string) {
 	for {
 		raw, err := ln.Accept()
 		if err != nil {
+			select {
+			case <-sb.closeCh:
+				// Normal shutdown — listener was closed by close(); no event.
+			default:
+				sb.emit(SocketEvent{Type: EventAcceptFailed, Endpoint: ln.Addr().String(), Err: err})
+			}
 			return
 		}
 		sb.wg.Add(1)
@@ -100,6 +108,9 @@ func (sb *socketBase) doServerHandshake(raw net.Conn, socketType string) {
 	hsCtx, cancel := context.WithTimeout(context.Background(), sb.cfg.handshakeTimeout)
 	defer cancel()
 
+	addr := raw.RemoteAddr().String()
+	sb.emit(SocketEvent{Type: EventAccepted, Endpoint: addr})
+
 	mech, err := sb.cfg.serverMechFactory(socketType)
 	if err != nil {
 		raw.Close()
@@ -111,12 +122,14 @@ func (sb *socketBase) doServerHandshake(raw net.Conn, socketType string) {
 		}
 	}
 	if pas, ok := mech.(security.PeerAddrSetter); ok {
-		pas.SetPeerAddr(raw.RemoteAddr().String())
+		pas.SetPeerAddr(addr)
 	}
 	c, err := conn.ServerHandshake(hsCtx, raw, mech)
 	if err != nil {
+		sb.emit(SocketEvent{Type: EventHandshakeFailed, Endpoint: addr, Err: err})
 		return // raw already closed by F4 on handshake failure
 	}
+	sb.emit(SocketEvent{Type: EventHandshakeSucceeded, Endpoint: addr})
 	if err := sb.addConn(c, socketType); err != nil {
 		c.Close()
 	}
@@ -127,8 +140,10 @@ func (sb *socketBase) doServerHandshake(raw net.Conn, socketType string) {
 func (sb *socketBase) connect(ctx context.Context, endpoint, socketType string) error {
 	raw, err := transport.Dial(ctx, endpoint)
 	if err != nil {
+		sb.emit(SocketEvent{Type: EventConnectFailed, Endpoint: endpoint, Err: err})
 		return err
 	}
+	sb.emit(SocketEvent{Type: EventConnected, Endpoint: endpoint})
 	hsCtx, cancel := context.WithTimeout(ctx, sb.cfg.handshakeTimeout)
 	defer cancel()
 
@@ -139,8 +154,10 @@ func (sb *socketBase) connect(ctx context.Context, endpoint, socketType string) 
 	}
 	c, err := conn.ClientHandshake(hsCtx, raw, mech)
 	if err != nil {
+		sb.emit(SocketEvent{Type: EventHandshakeFailed, Endpoint: endpoint, Err: err})
 		return err
 	}
+	sb.emit(SocketEvent{Type: EventHandshakeSucceeded, Endpoint: endpoint})
 	if err := sb.addConn(c, socketType); err != nil {
 		c.Close()
 		return err
