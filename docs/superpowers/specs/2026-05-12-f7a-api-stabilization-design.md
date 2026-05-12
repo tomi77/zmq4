@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-12
 **Author:** Tomasz Rup
-**Status:** draft (rev 2 — post spec-review fixes)
+**Status:** draft (rev 3 — post spec-review fixes)
 
 ---
 
@@ -129,9 +129,12 @@ func (m Message) String() string {
 | `sub.go` | Change `Subscribe([]byte)` and `Unsubscribe([]byte)` to `string`; update godoc |
 | `xsub.go` | Change `Subscribe([]byte)` and `Unsubscribe([]byte)` to `string`; update godoc |
 | `message.go` | Add `NewMsg`, `NewStringMsg`, `Frames`, `Frame`, `String` |
-| `cmd/main.go` | Update call site `Subscribe([]byte(""))` → `Subscribe("")` |
-| `pub_sub_test.go` | Migrate `Subscribe(nil)` → `Subscribe("")` |
-| `interop/interop_test.go` | Migrate `Subscribe(nil)` (2×) and `Subscribe(nil)` on `XSUB` → `Subscribe("")` |
+| `cmd/main.go` | Migrate `Subscribe([]byte(""))` → `Subscribe("")` (1 call site) |
+| `pub_sub_test.go` | Migrate all `Subscribe`/`Unsubscribe` call sites (nil + []byte(...) wraps) |
+| `xpub_xsub_test.go` | Migrate all `Subscribe`/`Unsubscribe` call sites (5 call sites) |
+| `integration_test.go` | Migrate all `Subscribe` call sites (3 call sites) |
+| `lifecycle_test.go` | Migrate `Subscribe([]byte("x"))` → `Subscribe("x")` (1 call site) |
+| `interop/interop_test.go` | Migrate `Subscribe(nil)` (2×) → `Subscribe("")` |
 
 ---
 
