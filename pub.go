@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"sync"
+	"sync/atomic"
 
 	"github.com/tomi77/zmq4/internal/conn"
 	"github.com/tomi77/zmq4/internal/wire"
@@ -16,19 +17,21 @@ type pubPipe struct {
 	conn  *conn.Conn
 	outCh chan Message
 
-	mu   sync.RWMutex
-	subs [][]byte // subscription prefixes; nil/empty entry = subscribe-all
+	mu      sync.Mutex              // serialises addSub / removeSub writes only
+	subsPtr atomic.Pointer[[][]byte] // copy-on-write; matches() reads are lock-free
 
 	wg        sync.WaitGroup
 	subNotify chan<- Message // non-nil for XPUB: subscription frames go here
 }
 
 func newPubPipe(c *conn.Conn, subNotify chan<- Message, sndHWM int) *pubPipe {
-	return &pubPipe{
+	pp := &pubPipe{
 		conn:      c,
 		outCh:     make(chan Message, sndHWM),
 		subNotify: subNotify,
 	}
+	pp.subsPtr.Store(&[][]byte{})
+	return pp
 }
 
 func (pp *pubPipe) subReader(ps *pubPipeSet) {
@@ -82,9 +85,7 @@ func (pp *pubPipe) writer(closeCh <-chan struct{}) {
 }
 
 func (pp *pubPipe) matches(topic []byte) bool {
-	pp.mu.RLock()
-	defer pp.mu.RUnlock()
-	for _, sub := range pp.subs {
+	for _, sub := range *pp.subsPtr.Load() {
 		if len(sub) == 0 || bytes.HasPrefix(topic, sub) {
 			return true
 		}
@@ -95,22 +96,30 @@ func (pp *pubPipe) matches(topic []byte) bool {
 func (pp *pubPipe) addSub(prefix []byte) {
 	pp.mu.Lock()
 	defer pp.mu.Unlock()
+	old := *pp.subsPtr.Load()
 	key := string(prefix)
-	for _, s := range pp.subs {
+	for _, s := range old {
 		if string(s) == key {
 			return
 		}
 	}
-	pp.subs = append(pp.subs, prefix)
+	next := make([][]byte, len(old)+1)
+	copy(next, old)
+	next[len(old)] = prefix
+	pp.subsPtr.Store(&next)
 }
 
 func (pp *pubPipe) removeSub(prefix []byte) {
 	pp.mu.Lock()
 	defer pp.mu.Unlock()
+	old := *pp.subsPtr.Load()
 	key := string(prefix)
-	for i, s := range pp.subs {
+	for i, s := range old {
 		if string(s) == key {
-			pp.subs = append(pp.subs[:i], pp.subs[i+1:]...)
+			next := make([][]byte, len(old)-1)
+			copy(next, old[:i])
+			copy(next[i:], old[i+1:])
+			pp.subsPtr.Store(&next)
 			return
 		}
 	}
