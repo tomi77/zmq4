@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-12
 **Author:** Tomasz Rup
-**Status:** draft (rev 4 — post spec-review fixes)
+**Status:** draft (rev 5 — post spec-review fixes)
 
 ---
 
@@ -54,11 +54,14 @@ call sites) has no `string` equivalent — all `nil` call sites must be migrated
 `""`. Affected call sites: `pub_sub_test.go` (1×), `interop/interop_test.go` (2×),
 `cmd/main.go` (1×, uses `[]byte("")` which migrates to `""`).
 
-**Godoc update:** The following comments must be updated to replace references to
-`nil` and `[]byte` with `""` and `string`:
-- Type-level comment on `SUB` (`sub.go`) — `Subscribe(nil) = subscribe-all` → `Subscribe("") = subscribe-all`
-- Method comment on `SUB.Subscribe` — `topic == nil or []byte{} subscribes to all messages` → `topic == "" subscribes to all messages`
-- Method comments on `SUB.Unsubscribe`, `XSUB.Subscribe`, `XSUB.Unsubscribe`
+**Godoc update:** Only two locations contain `nil`/`[]byte` references in prose that
+must change:
+- Type-level comment on `SUB` (`sub.go` line ~54): `Subscribe(nil) = subscribe-all` → `Subscribe("") = subscribe-all`
+- Method godoc on `SUB.Subscribe` (`sub.go` line ~95): `topic == nil or []byte{} subscribes to all messages` → `topic == "" subscribes to all messages`
+
+`SUB.Unsubscribe`, `XSUB.Subscribe`, and `XSUB.Unsubscribe` have no `nil`/`[]byte`
+prose in their godoc — their signatures change automatically with the parameter
+type change; no separate prose update needed.
 
 ---
 
@@ -132,7 +135,7 @@ func (m Message) String() string {
 | `xsub.go` | Change `Subscribe([]byte)` and `Unsubscribe([]byte)` to `string`; update godoc |
 | `message.go` | Add `NewMsg`, `NewStringMsg`, `Frames`, `Frame`, `String` |
 | `cmd/main.go` | Migrate `Subscribe([]byte(""))` → `Subscribe("")` (1 call site) |
-| `pub_sub_test.go` | Migrate all `Subscribe`/`Unsubscribe` call sites (nil + []byte(...) wraps) |
+| `pub_sub_test.go` | Migrate 8 call sites: 1 `nil` → `""`, 7 `[]byte(...)` casts removed |
 | `xpub_xsub_test.go` | Migrate all `Subscribe`/`Unsubscribe` call sites (5 call sites) |
 | `integration_test.go` | Migrate all `Subscribe` call sites (3 call sites) |
 | `lifecycle_test.go` | Migrate `Subscribe([]byte("x"))` → `Subscribe("x")` (1 call site) |
@@ -171,10 +174,17 @@ All other exported symbols are additive (new functions/methods) — no breakage.
 
 ### Call-site migration
 
-- Migrate all `Subscribe(nil)` / `Unsubscribe(nil)` → `Subscribe("")` / `Unsubscribe("")`
-  in `pub_sub_test.go` and `interop/interop_test.go`.
-- Migrate `Subscribe([]byte(""))` → `Subscribe("")` in `cmd/main.go`.
-- Any remaining `Subscribe([]byte(...))` call sites → remove the `[]byte(...)` cast.
+Three migration patterns apply:
+
+1. `Subscribe(nil)` / `Unsubscribe(nil)` → `Subscribe("")` / `Unsubscribe("")`
+   (subscribe-all semantics preserved).
+2. `Subscribe([]byte("literal"))` → `Subscribe("literal")` (remove the `[]byte()`
+   cast; the string value is unchanged).
+3. `Subscribe([]byte(variable))` → `Subscribe(variable)` where `variable` is
+   already a `string`; if it is `[]byte`, convert at the call site.
+
+Apply to all files listed in Section 3. After migration the package must compile
+and all tests must pass.
 
 ### Integration tests (existing suite)
 
