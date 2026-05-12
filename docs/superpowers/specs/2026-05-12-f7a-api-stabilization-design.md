@@ -1,0 +1,162 @@
+# F7a — API Stabilization
+
+**Date:** 2026-05-12
+**Author:** Tomasz Rup
+**Status:** draft
+
+---
+
+## 1. Goal
+
+Make three targeted, breaking API improvements before tagging v1.0:
+
+1. `Subscribe`/`Unsubscribe` accept `string` instead of `[]byte`.
+2. Add `NewMsg` / `NewStringMsg` constructor helpers for `Message`.
+3. Add `Frames()`, `Frame(i int)`, and `String()` convenience methods on `Message`.
+
+No socket-interface changes, no new error types, no changes to `Option`, `Poller`,
+`OverflowPolicy`, or event types.
+
+---
+
+## 2. Changes
+
+### 2.1 `Subscribe` / `Unsubscribe` — `string` parameter
+
+**Affected files:** `sub.go`, `xsub.go`
+
+**Before:**
+```go
+func (s *SUB)  Subscribe(topic []byte) error
+func (s *SUB)  Unsubscribe(topic []byte) error
+func (s *XSUB) Subscribe(topic []byte) error
+func (s *XSUB) Unsubscribe(topic []byte) error
+```
+
+**After:**
+```go
+func (s *SUB)  Subscribe(topic string) error
+func (s *SUB)  Unsubscribe(topic string) error
+func (s *XSUB) Subscribe(topic string) error
+func (s *XSUB) Unsubscribe(topic string) error
+```
+
+**Rationale:** Topics in practice are always human-readable strings (e.g. `"orders"`,
+`"prices.EUR"`). Requiring `[]byte` forces callers to write
+`sub.Subscribe([]byte("orders"))` for the overwhelmingly common case.
+
+**Implementation note:** Each implementation converts with `[]byte(topic)` before
+passing to the internal wire layer — no semantic change.
+
+**Empty topic (`""`)** continues to subscribe to all messages, matching existing
+behaviour.
+
+---
+
+### 2.2 `Message` constructor helpers
+
+**Affected file:** `message.go`
+
+```go
+// NewMsg returns a Message composed of the given frames.
+// NewMsg() with no arguments returns an empty Message.
+func NewMsg(frames ...[]byte) Message { return Message(frames) }
+
+// NewStringMsg returns a Message whose frames are the UTF-8 encodings of
+// the given strings.
+func NewStringMsg(frames ...string) Message {
+    msg := make(Message, len(frames))
+    for i, s := range frames {
+        msg[i] = []byte(s)
+    }
+    return msg
+}
+```
+
+**Rationale:** The current `Message{[]byte("hello")}` literal is verbose in the
+common single-frame case. Helpers allow `zmq4.NewMsg(data)` and
+`zmq4.NewStringMsg("hello")`.
+
+**Backward compatibility:** `Message{[]byte("x")}` and `Message(frames)` continue
+to work — `Message` remains `[][]byte`.
+
+---
+
+### 2.3 `Message` convenience methods
+
+**Affected file:** `message.go`
+
+```go
+// Frames returns the number of frames in the message.
+func (m Message) Frames() int { return len(m) }
+
+// Frame returns the i-th frame. Panics if i is out of range, matching the
+// behaviour of a plain slice index expression.
+func (m Message) Frame(i int) []byte { return m[i] }
+
+// String returns the first frame decoded as a UTF-8 string.
+// Returns "" for an empty message.
+func (m Message) String() string {
+    if len(m) == 0 {
+        return ""
+    }
+    return string(m[0])
+}
+```
+
+**Rationale:**
+- `Frames()` is a named alias for `len(msg)` — useful when passing a `Message` to
+  a function that only sees the `Message` type and not the underlying slice.
+- `Frame(i)` mirrors the slice-index panic semantics intentionally; callers that
+  need bounds checking can use `if i < msg.Frames()`.
+- `String()` covers the dominant single-frame text use case without requiring a
+  type assertion or a cast at the call site. For multi-frame messages, only frame 0
+  is returned — this is a documented, deliberate simplification.
+
+---
+
+## 3. Files
+
+| File | Action |
+|---|---|
+| `sub.go` | Change `Subscribe([]byte)` and `Unsubscribe([]byte)` to `string` |
+| `xsub.go` | Change `Subscribe([]byte)` and `Unsubscribe([]byte)` to `string` |
+| `message.go` | Add `NewMsg`, `NewStringMsg`, `Frames`, `Frame`, `String` |
+
+All other files — no changes.
+
+---
+
+## 4. Breaking changes
+
+| Symbol | Old signature | New signature |
+|---|---|---|
+| `SUB.Subscribe` | `([]byte) error` | `(string) error` |
+| `SUB.Unsubscribe` | `([]byte) error` | `(string) error` |
+| `XSUB.Subscribe` | `([]byte) error` | `(string) error` |
+| `XSUB.Unsubscribe` | `([]byte) error` | `(string) error` |
+
+All other exported symbols are additive (new functions/methods) — no breakage.
+
+---
+
+## 5. Test plan
+
+### Unit tests (`message_test.go`, new file, `package zmq4`)
+
+- `NewMsg()` → empty `Message`
+- `NewMsg([]byte("a"), []byte("b"))` → two-frame message, correct content
+- `NewStringMsg("x", "y")` → frames equal `[]byte("x")`, `[]byte("y")`
+- `Message{}.Frames()` → 0
+- `Message{[]byte("a"), []byte("b")}.Frames()` → 2
+- `Message{[]byte("hello")}.Frame(0)` → `[]byte("hello")`
+- `Message{[]byte("hello")}.Frame(1)` → panics (tested with `recover`)
+- `Message{}.String()` → `""`
+- `Message{[]byte("hi")}.String()` → `"hi"`
+- `Message{[]byte("a"), []byte("b")}.String()` → `"a"` (only frame 0)
+
+### Integration tests (existing suite)
+
+- Update all internal call sites of `Subscribe`/`Unsubscribe` in test files from
+  `[]byte(...)` to plain `string` literals.
+- Run full suite (`go test -race -count=1 ./...`) — all pass.
