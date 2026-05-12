@@ -157,6 +157,37 @@ func TestPipeSendClosedSocket(t *testing.T) {
 	}
 }
 
+func TestPipeSetByIdentityReturnsNilAfterRemove(t *testing.T) {
+	ps := newPipeSet()
+	id := []byte("gone")
+	p := newPipe(nil, id, 1000, 1000, Block)
+	ps.add(p)
+	ps.remove(p)
+	if got := ps.byIdentity(id); got != nil {
+		t.Fatalf("byIdentity after remove: got %v, want nil", got)
+	}
+}
+
+// TestPipeSetByIdentityAllocsAtMostOne verifies that byIdentity performs at
+// most one heap allocation regardless of how many pipes are registered.
+// With an O(N) linear scan this may exceed 1 if string conversions are not
+// optimised away by the compiler; a map-based implementation is O(1) by design.
+func TestPipeSetByIdentityAllocsAtMostOne(t *testing.T) {
+	ps := newPipeSet()
+	const n = 100
+	for i := range n {
+		id := []byte{byte(i >> 8), byte(i)}
+		ps.add(newPipe(nil, id, 1000, 1000, Block))
+	}
+	target := []byte{0, byte(n - 1)}
+	got := testing.AllocsPerRun(100, func() {
+		_ = ps.byIdentity(target)
+	})
+	if got > 1 {
+		t.Fatalf("byIdentity with %d pipes: %.0f allocs/op, want ≤1", n, got)
+	}
+}
+
 func TestPipeReadyChannels(t *testing.T) {
 	p := newPipe(nil, nil, 1000, 1000, Block)
 	if cap(p.inReady) != 1 {

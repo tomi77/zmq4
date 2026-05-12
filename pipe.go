@@ -132,18 +132,23 @@ func (p *pipe) send(msg Message, closeCh <-chan struct{}) bool {
 type pipeSet struct {
 	mu    sync.Mutex
 	pipes []*pipe
+	byID  map[string]*pipe // identity → pipe; O(1) lookup for ROUTER routing
 	robin int
 	added chan struct{}
 }
 
 func newPipeSet() *pipeSet {
-	return &pipeSet{added: make(chan struct{})}
+	return &pipeSet{
+		byID:  make(map[string]*pipe),
+		added: make(chan struct{}),
+	}
 }
 
 func (ps *pipeSet) add(p *pipe) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 	ps.pipes = append(ps.pipes, p)
+	ps.byID[string(p.identity)] = p
 	close(ps.added)
 	ps.added = make(chan struct{})
 }
@@ -151,6 +156,7 @@ func (ps *pipeSet) add(p *pipe) {
 func (ps *pipeSet) remove(p *pipe) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
+	delete(ps.byID, string(p.identity))
 	for i, q := range ps.pipes {
 		if q == p {
 			ps.pipes = append(ps.pipes[:i], ps.pipes[i+1:]...)
@@ -181,12 +187,7 @@ func (ps *pipeSet) next() *pipe {
 func (ps *pipeSet) byIdentity(id []byte) *pipe {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
-	for _, p := range ps.pipes {
-		if string(p.identity) == string(id) {
-			return p
-		}
-	}
-	return nil
+	return ps.byID[string(id)]
 }
 
 // all returns a snapshot of all current pipes.
