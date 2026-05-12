@@ -228,7 +228,7 @@ func (sb *socketBase) close() {
 		// the connection so the remote address is still valid.
 		closing := sb.pipes.all()
 		for _, p := range closing {
-			if p.conn != nil {
+			if p.conn != nil { // conn is nil in test-only pipes created without a real connection
 				sb.emit(SocketEvent{Type: EventClosed, Endpoint: p.conn.RemoteAddr().String()})
 				p.conn.Close()
 			}

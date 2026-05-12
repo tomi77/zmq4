@@ -164,12 +164,12 @@ func TestPollerMultipleSocketsAllReady(t *testing.T) {
 	}
 }
 
-func TestPollerPollOUTBlockingHWM(t *testing.T) {
+func TestPollerPollOUTReadyWithPeer(t *testing.T) {
 	ctx := pollCtx(t)
 	ep := pollEP(t, "")
 
-	// HWM=1: outCh capacity 1. Fill it up, then Poll POLLOUT should block
-	// until the consumer drains.
+	// Verifies that POLLOUT fires when a peer is connected and outCh has capacity.
+	// SndHWM=1 so outCh capacity is 1; after the priming round-trip the outCh is drained.
 	push := zmq4.NewPUSH(zmq4.WithNULL(), zmq4.WithSndHWM(1))
 	pull := zmq4.NewPULL(zmq4.WithNULL())
 	defer push.Close()
@@ -182,22 +182,20 @@ func TestPollerPollOUTBlockingHWM(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Fill the outCh (HWM=1) — wait for it to drain first to establish the pipe.
-	// Send one message and wait for delivery so the pipe is established and outCh drained.
+	// Prime the connection: send and receive one message so the pipe is established
+	// and outCh is drained before polling.
 	if err := push.Send(ctx, zmq4.Message{[]byte("prime")}); err != nil {
 		t.Fatal(err)
 	}
-	// Receive the priming message.
 	if _, err := pull.Recv(ctx); err != nil {
 		t.Fatal(err)
 	}
 
-	// Now block the outCh: send one (capacity=1), then fill it.
-	// We need to ensure outCh is full for the test to be meaningful.
-	// With HWM=1, outCh has cap=1. Send one message without letting writeLoop drain it.
-	// We can't control writeLoop timing directly, so use a longer poll window.
+	// outCh has space (capacity 1, nothing queued); Poll should return POLLOUT immediately.
+	// We can't reliably force outCh to be full without controlling writeLoop timing,
+	// so we only verify the ready path here.
 
-	// Send and immediately poll — the message may or may not have been drained.
+	// Poll with a short timeout; outCh is drained so POLLOUT should be immediate.
 	// Instead, test the POLLOUT semantics: if space is available, Poll(0) returns POLLOUT.
 	p := zmq4.NewPoller()
 	if err := p.Add(push, zmq4.POLLOUT); err != nil {

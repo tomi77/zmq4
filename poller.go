@@ -66,6 +66,9 @@ func asPollBase(s any) (*socketBase, bool) {
 }
 
 // Add registers s with event mask e.
+// Returns ErrInvalidEvents if e is zero.
+// Returns ErrNotSocket if s is not a zmq4 socket type.
+// Returns ErrAlreadyRegistered if s is already registered.
 func (p *Poller) Add(s any, e Events) error {
 	if e == 0 {
 		return ErrInvalidEvents
@@ -84,6 +87,7 @@ func (p *Poller) Add(s any, e Events) error {
 }
 
 // Remove unregisters s.
+// Returns ErrNotRegistered if s was never added.
 func (p *Poller) Remove(s any) error {
 	for i, item := range p.items {
 		if item.socket == s {
@@ -95,6 +99,8 @@ func (p *Poller) Remove(s any) error {
 }
 
 // Update replaces the event mask for an already-registered socket.
+// Returns ErrNotRegistered if s was never added.
+// Returns ErrInvalidEvents if e is zero.
 func (p *Poller) Update(s any, e Events) error {
 	if e == 0 {
 		return ErrInvalidEvents
