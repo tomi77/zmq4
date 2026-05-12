@@ -17,7 +17,7 @@ type pipe struct {
 	overflow     OverflowPolicy
 	onDisconnect func(addr string) // called when peer drops the connection unexpectedly
 	inReady  chan struct{} // capacity 1; poked by readLoop after each inCh enqueue
-	outReady chan struct{} // capacity 1; poked by writeLoop after each outCh drain
+	outReady chan struct{} // capacity 1; poked by writeLoop after each outCh dequeue
 	wg           sync.WaitGroup
 }
 
