@@ -44,9 +44,10 @@ func TestPollerPollINBlocking(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	sendErr := make(chan error, 1)
 	go func() {
 		time.Sleep(20 * time.Millisecond)
-		push.Send(ctx, zmq4.Message{[]byte("hello")})
+		sendErr <- push.Send(ctx, zmq4.Message{[]byte("hello")})
 	}()
 
 	events, err := p.Poll(-1)
@@ -61,6 +62,10 @@ func TestPollerPollINBlocking(t *testing.T) {
 	}
 	if events[0].Socket != pull {
 		t.Fatal("wrong socket in event")
+	}
+
+	if err := <-sendErr; err != nil {
+		t.Errorf("Send: %v", err)
 	}
 }
 
@@ -90,6 +95,7 @@ func TestPollerPollTimeout(t *testing.T) {
 func TestPollerPollClosedSocket(t *testing.T) {
 	p := zmq4.NewPoller()
 	pull := zmq4.NewPULL(zmq4.WithNULL())
+	defer pull.Close()
 	if err := p.Add(pull, zmq4.POLLIN); err != nil {
 		t.Fatal(err)
 	}
