@@ -166,3 +166,23 @@ func TestPipeReadyChannels(t *testing.T) {
 		t.Fatalf("outReady cap: got %d, want 1", cap(p.outReady))
 	}
 }
+
+func TestPipeSetSinglePipe(t *testing.T) {
+	ps := newPipeSet()
+
+	if got := ps.singlePipe(); got != nil {
+		t.Fatalf("empty pipeSet: singlePipe() = %v, want nil", got)
+	}
+
+	p1 := newPipe(nil, nil, 1000, 1000, Block)
+	ps.add(p1)
+	if got := ps.singlePipe(); got != p1 {
+		t.Fatalf("one-pipe pipeSet: singlePipe() = %v, want p1", got)
+	}
+
+	p2 := newPipe(nil, nil, 1000, 1000, Block)
+	ps.add(p2)
+	if got := ps.singlePipe(); got != nil {
+		t.Fatalf("two-pipe pipeSet: singlePipe() = %v, want nil", got)
+	}
+}

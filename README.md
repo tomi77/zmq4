@@ -113,19 +113,19 @@ cd benchmarks && go test -tags libzmq -bench=. -benchtime=3s -benchmem
 
 | Message size | tomi77 inproc | tomi77 tcp | go-zeromq tcp | pebbe tcp |
 |---|--:|--:|--:|--:|
-| 64 B   |    21.7 |    19.6 |     9.0 |   174   |
-| 1 KiB  |   278   |   339   |   134   | 1 434   |
-| 64 KiB | 3 977   | 2 928   | 3 928   | 3 445   |
-| 1 MiB  | 6 257   | 5 467   | 6 363   | 4 844   |
+| 64 B   |    22.6 |    19.5 |     9.0 |   174   |
+| 1 KiB  |   343   |   333   |   134   | 1 434   |
+| 64 KiB | 7 397   | 5 216   | 3 928   | 3 445   |
+| 1 MiB  | 12 337  | 6 621   | 6 363   | 4 844   |
 
 ### PUSH/PULL · one-way throughput (MB/s)
 
 | Message size | tomi77 inproc | tomi77 tcp | go-zeromq tcp | pebbe tcp |
 |---|--:|--:|--:|--:|
-| 64 B   |    20.2 |    17.1 |     9.1 |   175   |
-| 1 KiB  |   308   |   292   |   134   | 1 367   |
-| 64 KiB | 4 041   | 3 347   | 3 759   | 3 326   |
-| 1 MiB  | 6 990   | 4 802   | 6 315   | 4 849   |
+| 64 B   |    23.3 |    19.0 |     9.1 |   175   |
+| 1 KiB  |   340   |   412   |   134   | 1 367   |
+| 64 KiB | 7 248   | 5 094   | 3 759   | 3 326   |
+| 1 MiB  | 11 691  | 6 217   | 6 315   | 4 849   |
 
 ### PUB/SUB · send-side throughput (MB/s) †
 
@@ -143,19 +143,19 @@ cd benchmarks && go test -tags libzmq -bench=. -benchtime=3s -benchmem
 
 | Message size | tomi77 inproc | tomi77 tcp | go-zeromq tcp | pebbe tcp |
 |---|--:|--:|--:|--:|
-| 64 B   |  10.7 |  36.1 |  38.0 |   84.8 |
-| 1 KiB  |  10.7 |  38.5 |  40.5 |   88.7 |
-| 64 KiB |  35.2 |  75.6 |  63.1 |  132.4 |
-| 1 MiB  | 262   | 474   | 358   |  510   |
+| 64 B   |   9.7 |  35.4 |  38.0 |   84.8 |
+| 1 KiB  |   9.8 |  37.1 |  40.5 |   88.7 |
+| 64 KiB |  20.2 |  61.8 |  63.1 |  132.4 |
+| 1 MiB  | 189   | 312   | 358   |  510   |
 
 ### Heap allocations per operation (tcp)
 
 | Pattern   | tomi77 | go-zeromq | pebbe |
 |---|--:|--:|--:|
-| PAIR      |  8 | 26 | 1 |
-| PUSH/PULL |  8 | 26 | 1 |
+| PAIR      |  3 | 26 | 1 |
+| PUSH/PULL |  3 | 26 | 1 |
 | PUB/SUB   | 5–9 | 10–54 | n/a |
-| REQ/REP   | 20–21 | 32 | 4 |
+| REQ/REP   | 14 | 32 | 4 |
 
 ## Non-goals (for now)
 

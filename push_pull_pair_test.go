@@ -349,3 +349,51 @@ func TestPAIRIncompatiblePeer(t *testing.T) {
 		t.Fatalf("want ErrIncompatiblePeer for PAIR→REP, got %v", err)
 	}
 }
+
+// TestRecvAllocsPerOp asserts that a single send+recv cycle uses at most
+// maxAllocsPerRecv heap allocations. This is a performance regression guard:
+// the target is met after removing the redundant frame-body copy in readLoop
+// and adding a reflect-free fast path for the common single-pipe case.
+func TestRecvAllocsPerOp(t *testing.T) {
+	const maxAllocsPerRecv = 4
+
+	ctx := context.Background()
+
+	push := zmq4.NewPUSH()
+	pull := zmq4.NewPULL()
+
+	ep := inprocEP(t)
+	if err := push.Bind(ctx, ep); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { push.Close() })
+	if err := pull.Connect(ctx, ep); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pull.Close() })
+
+	msg := zmq4.NewMsg(make([]byte, 64))
+
+	// Warm up: give readLoop goroutine time to start and stabilise.
+	for range 20 {
+		if err := push.Send(ctx, msg); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pull.Recv(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	allocs := testing.AllocsPerRun(200, func() {
+		if err := push.Send(ctx, msg); err != nil {
+			t.Error(err)
+		}
+		if _, err := pull.Recv(ctx); err != nil {
+			t.Error(err)
+		}
+	})
+
+	if allocs > maxAllocsPerRecv {
+		t.Fatalf("allocs per send+recv = %.0f, want ≤%d", allocs, maxAllocsPerRecv)
+	}
+}

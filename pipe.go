@@ -66,8 +66,10 @@ func (p *pipe) readLoop(ps *pipeSet, closeCh <-chan struct{}) {
 		if err != nil {
 			return
 		}
-		body := append([]byte(nil), f.Body...) // owned copy
-		msg = append(msg, body)
+		// f.Body is freshly allocated by FrameReader on every ReadFrame call
+		// (mech.Unwrap for NULL/PLAIN is pass-through; CURVE returns a new buffer).
+		// No copy needed — the slice is already owned.
+		msg = append(msg, f.Body)
 		if !f.More {
 			select {
 			case p.inCh <- msg:
@@ -207,6 +209,17 @@ func (ps *pipeSet) len() int {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 	return len(ps.pipes)
+}
+
+// singlePipe returns the sole connected pipe when exactly one peer is active,
+// nil otherwise. Used by recvAny as a reflect-free fast path.
+func (ps *pipeSet) singlePipe() *pipe {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	if len(ps.pipes) == 1 {
+		return ps.pipes[0]
+	}
+	return nil
 }
 
 // peerIdentity extracts the peer's identity from handshake metadata or

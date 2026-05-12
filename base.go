@@ -257,9 +257,28 @@ func (sb *socketBase) close() {
 	})
 }
 
-// recvAny fair-queues across all pipes using reflect.Select. Retries on dead pipes.
+// recvAny fair-queues across all pipes. For the common single-peer case it
+// uses a plain select to avoid reflect.Select overhead and slice allocation.
 func (sb *socketBase) recvAny(ctx context.Context) (Message, *pipe, error) {
 	for {
+		// Fast path: exactly one connected pipe — direct channel receive,
+		// no reflect.Select and no snapshot allocation.
+		if p := sb.pipes.singlePipe(); p != nil {
+			select {
+			case <-ctx.Done():
+				return nil, nil, ctx.Err()
+			case <-sb.closeCh:
+				return nil, nil, ErrClosed
+			case msg, ok := <-p.inCh:
+				if ok {
+					return msg, p, nil
+				}
+				// Pipe died; readLoop has already called ps.remove. Retry.
+				continue
+			}
+		}
+
+		// General path: 0 or ≥2 pipes.
 		pipes := sb.pipes.all()
 		if len(pipes) == 0 {
 			select {
