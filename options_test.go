@@ -168,3 +168,18 @@ func TestWithZAPDomainSetsConfig(t *testing.T) {
 		t.Fatalf("zapDomain = %q, want %q", cfg.zapDomain, "test-domain")
 	}
 }
+
+func TestWithMonitorStoresChannel(t *testing.T) {
+	ch := make(chan SocketEvent, 1)
+	cfg := newSocketConfig([]Option{WithMonitor(ch)})
+	if cfg.monitorCh != ch {
+		t.Fatal("monitorCh not set")
+	}
+}
+
+func TestWithMonitorNilIsNoop(t *testing.T) {
+	cfg := newSocketConfig([]Option{WithMonitor(nil)})
+	if cfg.monitorCh != nil {
+		t.Fatal("nil channel should leave monitorCh nil")
+	}
+}

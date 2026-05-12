@@ -38,6 +38,7 @@ type socketConfig struct {
 	sndOverflow      OverflowPolicy // behaviour when sndHWM is reached; default Block
 	zapCaller        security.ZAPCaller // non-nil when WithZAPDomain is used
 	zapDomain        string
+	monitorCh        chan<- SocketEvent // non-nil when WithMonitor is used
 }
 
 // localMeta returns the metadata this socket advertises in handshake as
@@ -239,4 +240,18 @@ func WithZAPDomain(r *zmqzap.Router, domain string) Option {
 		cfg.zapCaller = zmqzap.NewClient(r)
 		cfg.zapDomain = domain
 	}
+}
+
+// WithMonitor wires ch as the monitoring channel for this socket. The socket
+// emits a SocketEvent for each lifecycle transition (bind, connect, handshake,
+// disconnect, close). When the socket closes it emits EventMonitorStopped and
+// then closes ch, so consumers may use:
+//
+//	for ev := range ch { … }
+//
+// The caller owns ch and must not close it. Events are dropped without blocking
+// when ch is full; use a buffered channel sized to the expected burst. A nil ch
+// is a no-op.
+func WithMonitor(ch chan<- SocketEvent) Option {
+	return func(cfg *socketConfig) { cfg.monitorCh = ch }
 }
