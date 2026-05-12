@@ -37,6 +37,12 @@ type socketBase struct {
 	listeners   []net.Listener
 	listenersMu sync.Mutex
 
+	// monitorMu guards monitorSealed. emit holds a read lock while sending;
+	// close() sets monitorSealed=true and closes the channel under a write
+	// lock. This prevents a concurrent emit from racing with close(monitorCh).
+	monitorMu     sync.RWMutex
+	monitorSealed bool
+
 	// postHandshake, when non-nil, is called by addConn instead of the
 	// default newPipe path. The compatibility check always runs first.
 	// Used by PUB/XPUB (pubPipe creation) and SUB/XSUB (subscription replay).
@@ -55,10 +61,17 @@ func newSocketBase(cfg *socketConfig) socketBase {
 	}
 }
 
-// emit sends ev to the monitor channel if one is configured.
-// Non-blocking: events are silently dropped when the channel is full.
+// emit sends ev to the monitor channel if one is configured and not yet
+// sealed. Non-blocking: events are silently dropped when the channel is full.
+// Holds monitorMu.RLock so it cannot race with the close(monitorCh) in
+// close() which holds the write lock.
 func (sb *socketBase) emit(ev SocketEvent) {
 	if sb.cfg.monitorCh == nil {
+		return
+	}
+	sb.monitorMu.RLock()
+	defer sb.monitorMu.RUnlock()
+	if sb.monitorSealed {
 		return
 	}
 	select {
@@ -206,17 +219,33 @@ func (sb *socketBase) close() {
 			ln.Close()
 		}
 		sb.listenersMu.Unlock()
-		for _, p := range sb.pipes.all() {
-			p.conn.Close()
-		}
+		// Wait for all acceptor and handshake goroutines to finish. After
+		// this point no new pipes will be added to the pipeSet, so the
+		// snapshot below is authoritative. ReadLoops are not tracked by sb.wg
+		// and are still blocked on ReadFrame — the pipes remain in pipeSet.
 		sb.wg.Wait()
-		// Close any pipes that were added after the first snapshot.
-		for _, p := range sb.pipes.all() {
+		// Snapshot all live pipes. Emit EventClosed for each before closing
+		// the connection so the remote address is still valid.
+		closing := sb.pipes.all()
+		for _, p := range closing {
+			sb.emit(SocketEvent{Type: EventClosed, Endpoint: p.conn.RemoteAddr().String()})
 			p.conn.Close()
 		}
-		// Now wait for all reader goroutines to exit.
-		for _, p := range sb.pipes.all() {
+		// Wait for every snapshotted pipe's reader goroutine to exit.
+		for _, p := range closing {
 			p.wg.Wait()
+		}
+		// Seal the monitor channel. Acquire the write lock to block any
+		// concurrent emit() calls (e.g. from a readLoop's onDisconnect that
+		// fired just before closeCh was observed as closed). Once monitorSealed
+		// is set, subsequent emit calls bail out under the read lock, preventing
+		// sends to the closed channel.
+		if sb.cfg.monitorCh != nil {
+			sb.emit(SocketEvent{Type: EventMonitorStopped})
+			sb.monitorMu.Lock()
+			sb.monitorSealed = true
+			close(sb.cfg.monitorCh)
+			sb.monitorMu.Unlock()
 		}
 	})
 }

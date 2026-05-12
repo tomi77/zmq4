@@ -187,3 +187,93 @@ func TestMonitorDisconnected(t *testing.T) {
 		t.Fatalf("got %v, want EventDisconnected", evs[0].Type)
 	}
 }
+
+func TestMonitorClose(t *testing.T) {
+	const ep = "inproc://monitor-close-test"
+
+	serverCh := make(chan zmq4.SocketEvent, 16)
+	server := zmq4.NewPULL(zmq4.WithNULL(), zmq4.WithMonitor(serverCh))
+
+	client1 := zmq4.NewPUSH(zmq4.WithNULL())
+	client2 := zmq4.NewPUSH(zmq4.WithNULL())
+	defer client1.Close()
+	defer client2.Close()
+
+	if err := server.Bind(context.Background(), ep); err != nil {
+		t.Fatal(err)
+	}
+	if err := client1.Connect(context.Background(), ep); err != nil {
+		t.Fatal(err)
+	}
+	if err := client2.Connect(context.Background(), ep); err != nil {
+		t.Fatal(err)
+	}
+
+	// Drain: EventListening + 2×(EventAccepted + EventHandshakeSucceeded) = 5 events.
+	drainN(t, serverCh, 5, 500*time.Millisecond)
+
+	// Close the server.
+	server.Close()
+
+	// Expect EventClosed ×2 + EventMonitorStopped = 3 events.
+	evs := drainN(t, serverCh, 3, 500*time.Millisecond)
+
+	closedCount := 0
+	stoppedCount := 0
+	for _, ev := range evs {
+		switch ev.Type {
+		case zmq4.EventClosed:
+			closedCount++
+		case zmq4.EventMonitorStopped:
+			stoppedCount++
+		default:
+			t.Errorf("unexpected event type: %v", ev.Type)
+		}
+	}
+	if closedCount != 2 {
+		t.Errorf("EventClosed count: got %d, want 2", closedCount)
+	}
+	if stoppedCount != 1 {
+		t.Errorf("EventMonitorStopped count: got %d, want 1", stoppedCount)
+	}
+	if evs[len(evs)-1].Type != zmq4.EventMonitorStopped {
+		t.Errorf("last event: got %v, want EventMonitorStopped", evs[len(evs)-1].Type)
+	}
+
+	// Channel must be closed after EventMonitorStopped.
+	select {
+	case _, ok := <-serverCh:
+		if ok {
+			t.Fatal("unexpected event after EventMonitorStopped")
+		}
+		// ok == false: channel closed as expected
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("monitor channel not closed after EventMonitorStopped")
+	}
+}
+
+func TestMonitorDropsOnFull(t *testing.T) {
+	const ep = "inproc://monitor-drops-test"
+
+	// Cap-1 channel: most events will be dropped, but emit must never block.
+	serverCh := make(chan zmq4.SocketEvent, 1)
+	server := zmq4.NewPULL(zmq4.WithNULL(), zmq4.WithMonitor(serverCh))
+
+	client := zmq4.NewPUSH(zmq4.WithNULL())
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = server.Bind(context.Background(), ep)
+		_ = client.Connect(context.Background(), ep)
+		client.Close()
+		server.Close()
+	}()
+
+	select {
+	case <-done:
+		// no deadlock
+	case <-time.After(2 * time.Second):
+		t.Fatal("deadlock detected: socket operations blocked on full monitor channel")
+	}
+}
