@@ -55,6 +55,18 @@ func newSocketBase(cfg *socketConfig) socketBase {
 	}
 }
 
+// emit sends ev to the monitor channel if one is configured.
+// Non-blocking: events are silently dropped when the channel is full.
+func (sb *socketBase) emit(ev SocketEvent) {
+	if sb.cfg.monitorCh == nil {
+		return
+	}
+	select {
+	case sb.cfg.monitorCh <- ev:
+	default:
+	}
+}
+
 // bind opens a listener on endpoint and launches a background acceptor
 // goroutine. Non-blocking after the listener is established.
 func (sb *socketBase) bind(ctx context.Context, endpoint, socketType string) error {
