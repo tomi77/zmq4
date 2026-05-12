@@ -96,6 +96,67 @@ zmq4.NewREP(zmq4.WithCURVEServer(serverOptions))         // server
 
 See [`examples/curve-security/`](./examples/curve-security/) for a self-contained CURVE example.
 
+## Benchmarks
+
+Measured on Apple M1 (darwin/arm64).
+Compared against [go-zeromq/zmq4](https://github.com/go-zeromq/zmq4) v0.17.0 and [pebbe/zmq4](https://github.com/pebbe/zmq4) v1.4.0 (cgo wrapper over libzmq 4.3.5).
+`go-zeromq` and `pebbe` support TCP only (inproc skipped).
+
+```
+# pure-Go only
+cd benchmarks && go test -bench=. -benchtime=3s -benchmem
+# include pebbe (requires libzmq)
+cd benchmarks && go test -tags libzmq -bench=. -benchtime=3s -benchmem
+```
+
+### PAIR · one-way throughput (MB/s)
+
+| Message size | tomi77 inproc | tomi77 tcp | go-zeromq tcp | pebbe tcp |
+|---|--:|--:|--:|--:|
+| 64 B   |    21.7 |    19.6 |     9.0 |   174   |
+| 1 KiB  |   278   |   339   |   134   | 1 434   |
+| 64 KiB | 3 977   | 2 928   | 3 928   | 3 445   |
+| 1 MiB  | 6 257   | 5 467   | 6 363   | 4 844   |
+
+### PUSH/PULL · one-way throughput (MB/s)
+
+| Message size | tomi77 inproc | tomi77 tcp | go-zeromq tcp | pebbe tcp |
+|---|--:|--:|--:|--:|
+| 64 B   |    20.2 |    17.1 |     9.1 |   175   |
+| 1 KiB  |   308   |   292   |   134   | 1 367   |
+| 64 KiB | 4 041   | 3 347   | 3 759   | 3 326   |
+| 1 MiB  | 6 990   | 4 802   | 6 315   | 4 849   |
+
+### PUB/SUB · send-side throughput (MB/s) †
+
+| Message size | tomi77 inproc | tomi77 tcp | go-zeromq tcp | pebbe tcp |
+|---|--:|--:|--:|--:|
+| 64 B   |    405  |    317  |    84.5 | n/a ‡ |
+| 1 KiB  |  1 490  |  1 452  |   875   | n/a ‡ |
+| 64 KiB |  5 998  |  6 041  | 1 260   | n/a ‡ |
+| 1 MiB  | 10 754  | 11 420  | 2 609   | n/a ‡ |
+
+† PUB drops messages when the outbound queue is full; numbers reflect send-side rate.  
+‡ `pebbe/PubSub` triggers a libzmq internal assertion (`signaler.cpp:368`) under repeated close/reopen cycles and is excluded.
+
+### REQ/REP · round-trip latency (µs/op)
+
+| Message size | tomi77 inproc | tomi77 tcp | go-zeromq tcp | pebbe tcp |
+|---|--:|--:|--:|--:|
+| 64 B   |  10.7 |  36.1 |  38.0 |   84.8 |
+| 1 KiB  |  10.7 |  38.5 |  40.5 |   88.7 |
+| 64 KiB |  35.2 |  75.6 |  63.1 |  132.4 |
+| 1 MiB  | 262   | 474   | 358   |  510   |
+
+### Heap allocations per operation (tcp)
+
+| Pattern   | tomi77 | go-zeromq | pebbe |
+|---|--:|--:|--:|
+| PAIR      |  8 | 26 | 1 |
+| PUSH/PULL |  8 | 26 | 1 |
+| PUB/SUB   | 5–9 | 10–54 | n/a |
+| REQ/REP   | 20–21 | 32 | 4 |
+
 ## Non-goals (for now)
 
 - Backwards compatibility with ZMTP 3.0 / 2.0 / 1.0.
