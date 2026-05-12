@@ -33,18 +33,30 @@ func NewPoller() *Poller { return &Poller{} }
 // Named-field embedding prevents interface promotion, so a type switch is used.
 func asPollBase(s any) (*socketBase, bool) {
 	switch v := s.(type) {
-	case *REQ:    return &v.base, true
-	case *REP:    return &v.base, true
-	case *DEALER: return &v.base, true
-	case *ROUTER: return &v.base, true
-	case *PUB:    return &v.base, true
-	case *SUB:    return &v.base, true
-	case *XPUB:   return &v.base, true
-	case *XSUB:   return &v.base, true
-	case *PUSH:   return &v.base, true
-	case *PULL:   return &v.base, true
-	case *PAIR:   return &v.base, true
-	default:      return nil, false
+	case *REQ:
+		return &v.base, true
+	case *REP:
+		return &v.base, true
+	case *DEALER:
+		return &v.base, true
+	case *ROUTER:
+		return &v.base, true
+	case *PUB:
+		return &v.base, true
+	case *SUB:
+		return &v.base, true
+	case *XPUB:
+		return &v.base, true
+	case *XSUB:
+		return &v.base, true
+	case *PUSH:
+		return &v.base, true
+	case *PULL:
+		return &v.base, true
+	case *PAIR:
+		return &v.base, true
+	default:
+		return nil, false
 	}
 }
 
