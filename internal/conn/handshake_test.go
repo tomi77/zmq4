@@ -358,7 +358,6 @@ func (s *stubMech) Unwrap(f wire.Frame) (wire.Frame, error) { return f, nil }
 func (s *stubMech) Done() bool                  { return false }
 func (s *stubMech) PeerMetadata() wire.Metadata { return nil }
 
-
 func TestRunHandshakeLoopUnexpectedFrame(t *testing.T) {
 	// Peer sends a FrameMessage during handshake → ErrUnexpectedFrame.
 	a, b := net.Pipe()

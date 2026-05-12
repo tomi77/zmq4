@@ -10,14 +10,14 @@ import (
 
 // pipe represents one live ZMTP connection inside a socket.
 type pipe struct {
-	conn     *conn.Conn
-	identity []byte    // peer identity; stable after construction
-	inCh     chan Message
-	outCh    chan Message   // send queue; capacity = sndHWM
+	conn         *conn.Conn
+	identity     []byte // peer identity; stable after construction
+	inCh         chan Message
+	outCh        chan Message // send queue; capacity = sndHWM
 	overflow     OverflowPolicy
 	onDisconnect func(addr string) // called when peer drops the connection unexpectedly
-	inReady  chan struct{} // capacity 1; poked by readLoop after each inCh enqueue
-	outReady chan struct{} // capacity 1; poked by writeLoop after each outCh dequeue
+	inReady      chan struct{}     // capacity 1; poked by readLoop after each inCh enqueue
+	outReady     chan struct{}     // capacity 1; poked by writeLoop after each outCh dequeue
 	wg           sync.WaitGroup
 }
 

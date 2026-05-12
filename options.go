@@ -33,9 +33,9 @@ type socketConfig struct {
 	// identity is the local Identity metadata value; nil = omit.
 	identity         []byte
 	handshakeTimeout time.Duration
-	sndHWM           int            // outbound pipe queue capacity; default 1000
-	rcvHWM           int            // inbound pipe queue capacity; default 1000
-	sndOverflow      OverflowPolicy // behaviour when sndHWM is reached; default Block
+	sndHWM           int                // outbound pipe queue capacity; default 1000
+	rcvHWM           int                // inbound pipe queue capacity; default 1000
+	sndOverflow      OverflowPolicy     // behaviour when sndHWM is reached; default Block
 	zapCaller        security.ZAPCaller // non-nil when WithZAPDomain is used
 	zapDomain        string
 	monitorCh        chan<- SocketEvent // non-nil when WithMonitor is used
