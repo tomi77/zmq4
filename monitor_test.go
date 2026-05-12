@@ -159,3 +159,31 @@ func TestMonitorHandshakeFailed(t *testing.T) {
 		t.Fatal("client EventHandshakeFailed.Err must be non-nil")
 	}
 }
+
+func TestMonitorDisconnected(t *testing.T) {
+	const ep = "inproc://monitor-disconnected-test"
+
+	serverCh := make(chan zmq4.SocketEvent, 8)
+	server := zmq4.NewPULL(zmq4.WithNULL(), zmq4.WithMonitor(serverCh))
+	defer server.Close()
+
+	client := zmq4.NewPUSH(zmq4.WithNULL())
+
+	if err := server.Bind(context.Background(), ep); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Connect(context.Background(), ep); err != nil {
+		t.Fatal(err)
+	}
+
+	// Drain connection events on server side.
+	drainN(t, serverCh, 3, 200*time.Millisecond) // Listening + Accepted + HandshakeSucceeded
+
+	// Close client — server's readLoop will see an I/O error → EventDisconnected.
+	client.Close()
+
+	evs := drainN(t, serverCh, 1, 500*time.Millisecond)
+	if evs[0].Type != zmq4.EventDisconnected {
+		t.Fatalf("got %v, want EventDisconnected", evs[0].Type)
+	}
+}

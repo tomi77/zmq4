@@ -14,8 +14,9 @@ type pipe struct {
 	identity []byte    // peer identity; stable after construction
 	inCh     chan Message
 	outCh    chan Message   // send queue; capacity = sndHWM
-	overflow OverflowPolicy
-	wg       sync.WaitGroup
+	overflow     OverflowPolicy
+	onDisconnect func(addr string) // called when peer drops the connection unexpectedly
+	wg           sync.WaitGroup
 }
 
 func newPipe(c *conn.Conn, identity []byte, sndHWM, rcvHWM int, overflow OverflowPolicy) *pipe {
@@ -43,7 +44,17 @@ func (p *pipe) start(ps *pipeSet, closeCh <-chan struct{}) {
 func (p *pipe) readLoop(ps *pipeSet, closeCh <-chan struct{}) {
 	defer p.wg.Done()
 	defer close(p.inCh)
-	defer ps.remove(p)
+	defer func() {
+		ps.remove(p)
+		if p.onDisconnect != nil {
+			select {
+			case <-closeCh:
+				// Socket is shutting down; EventClosed is handled by close().
+			default:
+				p.onDisconnect(p.conn.RemoteAddr().String())
+			}
+		}
+	}()
 
 	var msg Message
 	for {
