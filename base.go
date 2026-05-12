@@ -241,10 +241,15 @@ func (sb *socketBase) close() {
 		// is set, subsequent emit calls bail out under the read lock, preventing
 		// sends to the closed channel.
 		if sb.cfg.monitorCh != nil {
-			sb.emit(SocketEvent{Type: EventMonitorStopped})
 			sb.monitorMu.Lock()
-			sb.monitorSealed = true
-			close(sb.cfg.monitorCh)
+			if !sb.monitorSealed {
+				select {
+				case sb.cfg.monitorCh <- SocketEvent{Type: EventMonitorStopped}:
+				default:
+				}
+				sb.monitorSealed = true
+				close(sb.cfg.monitorCh)
+			}
 			sb.monitorMu.Unlock()
 		}
 	})
