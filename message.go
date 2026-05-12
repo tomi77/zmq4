@@ -34,3 +34,14 @@ func (m Message) String() string {
 	}
 	return string(m[0])
 }
+
+// Clone returns a deep copy of m. Each frame body is a new allocation
+// independent of the original, so caller and clone may be used concurrently
+// without data races.
+func (m Message) Clone() Message {
+	c := make(Message, len(m))
+	for i, part := range m {
+		c[i] = append([]byte(nil), part...)
+	}
+	return c
+}

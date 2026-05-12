@@ -260,3 +260,87 @@ func TestSUBCloseUnblocksRecv(t *testing.T) {
 		t.Fatalf("want ErrClosed, got %v", recvErr)
 	}
 }
+
+// TestPUBSendFanoutAllMatchingSubscribersReceive verifies that every subscriber
+// sharing the same topic prefix receives the broadcast message.
+func TestPUBSendFanoutAllMatchingSubscribersReceive(t *testing.T) {
+	ep := pubSubEP(t)
+	ctx := psCtx(t)
+
+	pub := zmq4.NewPUB()
+	if err := pub.Bind(ctx, ep); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pub.Close() })
+
+	const n = 3
+	subs := make([]*zmq4.SUB, n)
+	for i := range n {
+		sub := zmq4.NewSUB()
+		if err := sub.Connect(ctx, ep); err != nil {
+			t.Fatalf("Connect sub[%d]: %v", i, err)
+		}
+		if err := sub.Subscribe("news"); err != nil {
+			t.Fatalf("Subscribe sub[%d]: %v", i, err)
+		}
+		t.Cleanup(func() { sub.Close() })
+		subs[i] = sub
+	}
+	time.Sleep(30 * time.Millisecond)
+
+	want := "news-broadcast"
+	if err := pub.Send(ctx, zmq4.NewStringMsg(want)); err != nil {
+		t.Fatal(err)
+	}
+	for i, sub := range subs {
+		msg, err := sub.Recv(ctx)
+		if err != nil {
+			t.Fatalf("sub[%d] Recv: %v", i, err)
+		}
+		if msg.String() != want {
+			t.Fatalf("sub[%d]: want %q, got %q", i, want, msg.String())
+		}
+	}
+}
+
+// TestPUBSendFanoutAllocsConstantWithSubscriberCount verifies that PUB.Send
+// allocates only one deep copy of the message regardless of how many
+// subscribers match — not one copy per subscriber.
+func TestPUBSendFanoutAllocsConstantWithSubscriberCount(t *testing.T) {
+	ep := pubSubEP(t)
+
+	pub := zmq4.NewPUB()
+	if err := pub.Bind(context.Background(), ep); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { pub.Close() })
+
+	const n = 3
+	for i := range n {
+		sub := zmq4.NewSUB(zmq4.WithRcvHWM(10000))
+		if err := sub.Connect(context.Background(), ep); err != nil {
+			t.Fatalf("Connect sub[%d]: %v", i, err)
+		}
+		if err := sub.Subscribe("t"); err != nil {
+			t.Fatalf("Subscribe sub[%d]: %v", i, err)
+		}
+		t.Cleanup(func() { sub.Close() })
+	}
+	time.Sleep(30 * time.Millisecond)
+
+	msg := zmq4.NewStringMsg("t", "payload")
+
+	// With copy-once fanout:
+	//   1 (pubPipes snapshot) + 1 (Message header) + 2 (body frames) = 4 allocs
+	// With the old per-subscriber copy (n=3, 2 frames):
+	//   1 (snapshot) + 3×(1+2) = 10 allocs
+	const wantMaxAllocs = 5.0
+	got := testing.AllocsPerRun(20, func() {
+		if err := pub.Send(context.Background(), msg); err != nil {
+			t.Fatalf("Send: %v", err)
+		}
+	})
+	if got > wantMaxAllocs {
+		t.Fatalf("PUB.Send with %d subscribers: %.0f allocs/op, want ≤%.0f (copy-once not applied)", n, got, wantMaxAllocs)
+	}
+}

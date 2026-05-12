@@ -206,14 +206,14 @@ func (s *PUB) Send(ctx context.Context, msg Message) error {
 		return ErrNoTopic
 	}
 	topic := msg[0]
+	var shared Message
 	for _, pp := range s.pubPipes.all() {
 		if pp.matches(topic) {
-			copied := make(Message, len(msg))
-			for i, part := range msg {
-				copied[i] = append([]byte(nil), part...)
+			if shared == nil {
+				shared = msg.Clone()
 			}
 			select {
-			case pp.outCh <- copied:
+			case pp.outCh <- shared:
 			default:
 			}
 		}
