@@ -1,12 +1,13 @@
 # 00 — Meta-overview
 
-> **Status:** living document. F1, F2a, F2b, F2c, F3, F4, F5a, F5b, F5c, F6a, F6b, and F6c complete
+> **Status:** living document. F1, F2a, F2b, F2c, F3, F4, F5a, F5b, F5c, F6a, F6b, F6c, and F6d complete
 > and tagged (`phase-1-wire-complete`, `phase-2a-null-complete`,
 > `phase-2b-plain-complete`, `phase-2c-curve-complete`,
 > `phase-3-transport-complete`, `phase-4-conn-complete`,
 > `phase-5a-reqrep-complete`, `phase-5b-pubsub-complete`,
 > `phase-5c-pipeline-pair-complete`, `phase-6a-hwm-complete`,
-> `phase-6b-zap-complete`, `phase-6c-monitoring-complete`). F6d pending.
+> `phase-6b-zap-complete`, `phase-6c-monitoring-complete`,
+> `phase-6d-polling-complete`).
 > **Author:** Tomasz Rup
 > **Date:** 2026-05-02 (last updated 2026-05-12)
 
@@ -120,7 +121,7 @@ deferred until all three concrete implementations exist (extracted in F2c).
 | F6a | — | Configurable SNDHWM / RCVHWM with Block/Drop policies. | Integration + unit. | **Complete** — tagged `phase-6a-hwm-complete`. |
 | F6b | — | ZAP auth (RFC 27) for NULL/PLAIN/CURVE — in-process channel-based handler. | Unit + integration. | **Complete** — tagged `phase-6b-zap-complete`. |
 | F6c | — | Socket monitoring events. | Unit + integration. | **Complete** — tagged `phase-6c-monitoring-complete`. |
-| F6d | — | Polling (zmq_poll equivalent). | Unit + integration. | Pending. |
+| F6d | — | Polling (zmq_poll equivalent). | Unit + integration. | **Complete** — tagged `phase-6d-polling-complete`. |
 
 Each phase is gated: **the next phase does not start until the previous one
 is merged with all its tests passing.**
