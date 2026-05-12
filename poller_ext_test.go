@@ -233,11 +233,9 @@ func TestPollerPollINNoPeersBlocksUntilPeer(t *testing.T) {
 	var wg sync.WaitGroup
 	var pollEvents []zmq4.Event
 	var pollErr error
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		pollEvents, pollErr = p.Poll(-1)
-	}()
+	})
 
 	time.Sleep(30 * time.Millisecond)
 	// Now connect and send — this triggers currentAdded() wakeup + inReady signal.
