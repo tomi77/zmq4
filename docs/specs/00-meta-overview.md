@@ -1,6 +1,6 @@
 # 00 — Meta-overview
 
-> **Status:** living document. F1, F2a, F2b, F2c, F3, F4, F5a, F5b, F5c, F6a, F6b, F6c, F6d, F7a, and F7b complete
+> **Status:** living document. F1, F2a, F2b, F2c, F3, F4, F5a, F5b, F5c, F6a, F6b, F6c, F6d, F7a, F7b, and F8 complete
 > and tagged (`phase-1-wire-complete`, `phase-2a-null-complete`,
 > `phase-2b-plain-complete`, `phase-2c-curve-complete`,
 > `phase-3-transport-complete`, `phase-4-conn-complete`,
@@ -125,6 +125,7 @@ deferred until all three concrete implementations exist (extracted in F2c).
 | F6d | — | Polling (zmq_poll equivalent). | Unit + integration. | **Complete** — tagged `phase-6d-polling-complete`. |
 | F7a | — | API stabilization: `Subscribe(string)`, `NewMsg`/`NewStringMsg`, `Message` methods. | Unit + compile-time migration. | **Complete** — tagged `phase-7a-api-stabilization-complete`. |
 | F7b | — | Documentation and examples: godoc gap-fill, `Example*` functions for all socket types, standalone programs under `examples/`, README rewrite. | `go test -run Example ./...`, `go build ./examples/...`, `staticcheck ./...`. | **Complete** — tagged `phase-7b-docs-examples-complete`. |
+| F8 | `docs/plans/2026-05-12-f8-benchmarks.md` | Benchmarks module (`benchmarks/`) measuring throughput and latency for tomi77/zmq4, go-zeromq/zmq4, and pebbe/zmq4 across all socket patterns and two transports. | `go test -bench=. -benchmem ./benchmarks/...`, `benchstat` via `compare.sh`. | **Complete** — merged to `main` 2026-05-12. |
 
 Each phase is gated: **the next phase does not start until the previous one
 is merged with all its tests passing.**
