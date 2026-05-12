@@ -4,6 +4,7 @@ go 1.26
 
 require (
 	github.com/go-zeromq/zmq4 v0.17.0
+	github.com/pebbe/zmq4 v1.4.0
 	github.com/tomi77/zmq4 v0.0.0-00010101000000-000000000000
 )
 
