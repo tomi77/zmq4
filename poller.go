@@ -201,7 +201,45 @@ func (p *Poller) Poll(timeout time.Duration) ([]Event, error) {
 	}
 }
 
-// buildCases is implemented in Task 5.
+// buildCases constructs the reflect.SelectCase slice for Phase 2.
+// Slot 0 is always the timeout (nil chan = block forever when timeout < 0).
+// Each subsequent slot is tagged so Poll knows what action to take on wakeup.
 func buildCases(items []pollEntry, timerCh <-chan time.Time) ([]reflect.SelectCase, []caseTag) {
-	panic("buildCases not yet implemented")
+	var cases []reflect.SelectCase
+	var tags []caseTag
+
+	appendCase := func(chanVal reflect.Value, tag caseTag) {
+		cases = append(cases, reflect.SelectCase{Dir: reflect.SelectRecv, Chan: chanVal})
+		tags = append(tags, tag)
+	}
+
+	// Slot 0: timeout (nil channel blocks forever → correct for timeout < 0).
+	appendCase(reflect.ValueOf(timerCh), tagTimeout)
+
+	// Signal cases: one group per registered socket.
+	for _, item := range items {
+		pipes := item.base.pipes.all()
+		if len(pipes) == 0 {
+			// No peers yet — wake up when the first one connects.
+			appendCase(reflect.ValueOf(item.base.pipes.currentAdded()), tagRebuild)
+			continue
+		}
+		if item.events&POLLIN != 0 {
+			for _, pp := range pipes {
+				appendCase(reflect.ValueOf(pp.inReady), tagWakeup)
+			}
+		}
+		if item.events&POLLOUT != 0 {
+			for _, pp := range pipes {
+				appendCase(reflect.ValueOf(pp.outReady), tagWakeup)
+			}
+		}
+	}
+
+	// Close cases: one per registered socket (any one closing terminates Poll).
+	for _, item := range items {
+		appendCase(reflect.ValueOf(item.base.closeCh), tagClose)
+	}
+
+	return cases, tags
 }
