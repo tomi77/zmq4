@@ -223,6 +223,17 @@ func (ps *pipeSet) singlePipe() *pipe {
 	return nil
 }
 
+// twoPipes returns both pipes when exactly two peers are active, nil otherwise.
+// Used by recvAny as a reflect-free fast path.
+func (ps *pipeSet) twoPipes() (*pipe, *pipe) {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	if len(ps.pipes) == 2 {
+		return ps.pipes[0], ps.pipes[1]
+	}
+	return nil, nil
+}
+
 // peerIdentity extracts the peer's identity from handshake metadata or
 // generates a random 5-byte identity. meta is wire.Metadata from
 // conn.Conn.PeerMetadata(); its Get method performs case-insensitive lookup.

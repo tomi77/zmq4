@@ -1,6 +1,7 @@
 package zmq4
 
 import (
+	"context"
 	"net"
 	"testing"
 	"time"
@@ -215,5 +216,57 @@ func TestPipeSetSinglePipe(t *testing.T) {
 	ps.add(p2)
 	if got := ps.singlePipe(); got != nil {
 		t.Fatalf("two-pipe pipeSet: singlePipe() = %v, want nil", got)
+	}
+}
+
+func TestPipeSetTwoPipes(t *testing.T) {
+	ps := newPipeSet()
+
+	if p1, p2 := ps.twoPipes(); p1 != nil || p2 != nil {
+		t.Fatalf("empty pipeSet: twoPipes() = %v, %v, want nil, nil", p1, p2)
+	}
+
+	pa := newPipe(nil, nil, 1000, 1000, Block)
+	ps.add(pa)
+	if p1, p2 := ps.twoPipes(); p1 != nil || p2 != nil {
+		t.Fatalf("one-pipe pipeSet: twoPipes() = %v, %v, want nil, nil", p1, p2)
+	}
+
+	pb := newPipe(nil, nil, 1000, 1000, Block)
+	ps.add(pb)
+	if p1, p2 := ps.twoPipes(); p1 != pa || p2 != pb {
+		t.Fatalf("two-pipe pipeSet: twoPipes() = %v, %v, want pa, pb", p1, p2)
+	}
+
+	pc := newPipe(nil, nil, 1000, 1000, Block)
+	ps.add(pc)
+	if p1, p2 := ps.twoPipes(); p1 != nil || p2 != nil {
+		t.Fatalf("three-pipe pipeSet: twoPipes() = %v, %v, want nil, nil", p1, p2)
+	}
+}
+
+// TestRecvAnyTwoPipesAllocsZero verifies that recvAny with exactly 2 connected
+// pipes makes zero heap allocations — no reflect.SelectCase slice and no
+// snapshot allocation.
+func TestRecvAnyTwoPipesAllocsZero(t *testing.T) {
+	sb := newSocketBase(newSocketConfig(nil))
+
+	p1 := newPipe(nil, []byte("p1"), 0, 1000, Block)
+	p2 := newPipe(nil, []byte("p2"), 0, 1000, Block)
+	sb.pipes.add(p1)
+	sb.pipes.add(p2)
+
+	msg := Message{[]byte("hello")}
+	for range 1000 {
+		p1.inCh <- msg
+		p2.inCh <- msg
+	}
+
+	ctx := context.Background()
+	got := testing.AllocsPerRun(100, func() {
+		_, _, _ = sb.recvAny(ctx)
+	})
+	if got > 0 {
+		t.Fatalf("recvAny with 2 pipes: %.0f allocs/op, want 0", got)
 	}
 }

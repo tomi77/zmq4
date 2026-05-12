@@ -278,7 +278,28 @@ func (sb *socketBase) recvAny(ctx context.Context) (Message, *pipe, error) {
 			}
 		}
 
-		// General path: 0 or ≥2 pipes.
+		// Two-pipe fast path: static 4-case select, no reflect.Select and no
+		// snapshot allocation.
+		if p1, p2 := sb.pipes.twoPipes(); p1 != nil {
+			select {
+			case <-ctx.Done():
+				return nil, nil, ctx.Err()
+			case <-sb.closeCh:
+				return nil, nil, ErrClosed
+			case msg, ok := <-p1.inCh:
+				if ok {
+					return msg, p1, nil
+				}
+				continue
+			case msg, ok := <-p2.inCh:
+				if ok {
+					return msg, p2, nil
+				}
+				continue
+			}
+		}
+
+		// General path: 0 or ≥3 pipes.
 		pipes := sb.pipes.all()
 		if len(pipes) == 0 {
 			select {
