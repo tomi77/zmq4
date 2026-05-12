@@ -228,8 +228,10 @@ func (sb *socketBase) close() {
 		// the connection so the remote address is still valid.
 		closing := sb.pipes.all()
 		for _, p := range closing {
-			sb.emit(SocketEvent{Type: EventClosed, Endpoint: p.conn.RemoteAddr().String()})
-			p.conn.Close()
+			if p.conn != nil {
+				sb.emit(SocketEvent{Type: EventClosed, Endpoint: p.conn.RemoteAddr().String()})
+				p.conn.Close()
+			}
 		}
 		// Wait for every snapshotted pipe's reader goroutine to exit.
 		for _, p := range closing {
@@ -325,4 +327,3 @@ func (sb *socketBase) sendWaitPipe(ctx context.Context) (*pipe, error) {
 		}
 	}
 }
-

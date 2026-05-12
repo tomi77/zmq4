@@ -91,3 +91,104 @@ func TestPollerUpdateMask(t *testing.T) {
 		t.Fatalf("after Update: events = %v, want POLLOUT", p.items[0].events)
 	}
 }
+
+func TestPollerPollZeroSocketsNoBlock(t *testing.T) {
+	p := NewPoller()
+	events, err := p.Poll(0)
+	if err != nil {
+		t.Fatalf("want nil err, got %v", err)
+	}
+	if events != nil {
+		t.Fatalf("want nil events, got %v", events)
+	}
+}
+
+func TestPollerPollInNonBlocking(t *testing.T) {
+	p := NewPoller()
+	pull := NewPULL()
+	defer pull.Close()
+	if err := p.Add(pull, POLLIN); err != nil {
+		t.Fatal(err)
+	}
+
+	// Manually inject a message into the first pipe's inCh.
+	// No peer needed — we poke the internal channel directly.
+	testPipe := newPipe(nil, nil, 10, 10, Block)
+	pull.base.pipes.add(testPipe)
+	testPipe.inCh <- Message{[]byte("hello")}
+
+	events, err := p.Poll(0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("want 1 event, got %d", len(events))
+	}
+	if events[0].Events != POLLIN {
+		t.Fatalf("want POLLIN, got %v", events[0].Events)
+	}
+	if events[0].Socket != pull {
+		t.Fatal("wrong socket in event")
+	}
+}
+
+func TestPollerPollOutNonBlocking(t *testing.T) {
+	p := NewPoller()
+	push := NewPUSH()
+	defer push.Close()
+	if err := p.Add(push, POLLOUT); err != nil {
+		t.Fatal(err)
+	}
+
+	// Pipe with capacity 5, nothing queued → POLLOUT ready.
+	testPipe := newPipe(nil, nil, 5, 10, Block)
+	push.base.pipes.add(testPipe)
+
+	events, err := p.Poll(0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 1 || events[0].Events != POLLOUT {
+		t.Fatalf("want POLLOUT event, got %v", events)
+	}
+}
+
+func TestPollerPollOutFullQueueNoEvent(t *testing.T) {
+	p := NewPoller()
+	push := NewPUSH()
+	defer push.Close()
+	if err := p.Add(push, POLLOUT); err != nil {
+		t.Fatal(err)
+	}
+
+	// Pipe with capacity 2, both slots filled → not POLLOUT-ready.
+	testPipe := newPipe(nil, nil, 2, 10, Block)
+	push.base.pipes.add(testPipe)
+	testPipe.outCh <- Message{[]byte("a")}
+	testPipe.outCh <- Message{[]byte("b")}
+
+	events, err := p.Poll(0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("want no events (outCh full), got %v", events)
+	}
+}
+
+func TestPollerPollNoPeersNoBlock(t *testing.T) {
+	p := NewPoller()
+	pull := NewPULL()
+	defer pull.Close()
+	if err := p.Add(pull, POLLIN); err != nil {
+		t.Fatal(err)
+	}
+	// No peers — Phase 1 finds nothing; timeout=0 returns nil immediately.
+	events, err := p.Poll(0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if events != nil {
+		t.Fatalf("want nil, got %v", events)
+	}
+}

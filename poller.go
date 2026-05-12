@@ -1,5 +1,10 @@
 package zmq4
 
+import (
+	"reflect"
+	"time"
+)
+
 // Events is a bitmask of polling readiness events.
 type Events uint32
 
@@ -101,4 +106,102 @@ func (p *Poller) Update(s any, e Events) error {
 		}
 	}
 	return ErrNotRegistered
+}
+
+type caseTag int
+
+const (
+	tagTimeout caseTag = iota
+	tagClose
+	tagRebuild
+	tagWakeup
+)
+
+// phase1 does a non-blocking scan across all registered entries.
+// Returns all sockets that satisfy their event mask right now.
+func phase1(items []pollEntry) []Event {
+	var ready []Event
+	for _, item := range items {
+		pipes := item.base.pipes.all()
+		var got Events
+		if item.events&POLLIN != 0 {
+			for _, pp := range pipes {
+				if len(pp.inCh) > 0 {
+					got |= POLLIN
+					break
+				}
+			}
+		}
+		if item.events&POLLOUT != 0 {
+			for _, pp := range pipes {
+				if len(pp.outCh) < cap(pp.outCh) {
+					got |= POLLOUT
+					break
+				}
+			}
+		}
+		if got != 0 {
+			ready = append(ready, Event{Socket: item.socket, Events: got})
+		}
+	}
+	return ready
+}
+
+// Poll blocks until at least one registered socket satisfies its event mask,
+// then returns all currently-ready sockets.
+//
+//	timeout < 0  → block indefinitely
+//	timeout = 0  → non-blocking snapshot
+//	timeout > 0  → block up to timeout; (nil, nil) when expired
+//
+// Returns (nil, ErrClosed) if any registered socket is closed during the call.
+// Returns (nil, nil) immediately when no sockets are registered.
+func (p *Poller) Poll(timeout time.Duration) ([]Event, error) {
+	if len(p.items) == 0 {
+		return nil, nil
+	}
+
+	ready := phase1(p.items)
+	if len(ready) > 0 || timeout == 0 {
+		return ready, nil
+	}
+
+	var deadline time.Time
+	if timeout > 0 {
+		deadline = time.Now().Add(timeout)
+	}
+
+	for {
+		var timerCh <-chan time.Time // nil when timeout < 0 → blocks forever
+		if timeout > 0 {
+			remaining := time.Until(deadline)
+			if remaining <= 0 {
+				return nil, nil
+			}
+			timerCh = time.After(remaining)
+		}
+
+		cases, tags := buildCases(p.items, timerCh)
+		chosen, _, _ := reflect.Select(cases)
+
+		switch tags[chosen] {
+		case tagTimeout:
+			return nil, nil
+		case tagClose:
+			return nil, ErrClosed
+		case tagRebuild:
+			// new peer connected; rebuild cases on next loop iteration
+		case tagWakeup:
+			ready = phase1(p.items)
+			if len(ready) > 0 {
+				return ready, nil
+			}
+			// stale signal from dead pipe; rebuild and retry
+		}
+	}
+}
+
+// buildCases is implemented in Task 5.
+func buildCases(items []pollEntry, timerCh <-chan time.Time) ([]reflect.SelectCase, []caseTag) {
+	panic("buildCases not yet implemented")
 }
