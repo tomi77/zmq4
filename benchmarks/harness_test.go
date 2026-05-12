@@ -107,6 +107,45 @@ func benchThroughput(b *testing.B, sender, receiver Socket, msgSize int) {
 	}
 }
 
+// benchPubSubThroughput is like benchThroughput but tolerates dropped messages.
+// PUB sockets use a drop policy on full send queues, so the subscriber may
+// receive fewer than b.N messages. The function drains whatever arrives within
+// a brief settling window after the sender finishes, then stops.
+func benchPubSubThroughput(b *testing.B, pub, sub Socket, msgSize int) {
+	b.Helper()
+	msg := make([]byte, msgSize)
+	for i := range msg {
+		msg[i] = 0x42
+	}
+	b.SetBytes(int64(msgSize))
+	b.ReportAllocs()
+
+	doneCh := make(chan struct{})
+	go func() {
+		defer close(doneCh)
+		for {
+			if _, err := sub.Recv(); err != nil {
+				return
+			}
+		}
+	}()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := pub.Send(msg); err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.StopTimer()
+	// Close the pub socket so the sub side gets an error and the goroutine exits.
+	// The caller's cleanup will also close the sub.
+	_ = pub.Close()
+	select {
+	case <-doneCh:
+	case <-time.After(2 * time.Second):
+	}
+}
+
 // benchRoundTrip mierzy latencję round-trip: req wysyła + czeka na odpowiedź,
 // rep echo-pętla w goroutine.
 func benchRoundTrip(b *testing.B, req, rep Socket, msgSize int) {

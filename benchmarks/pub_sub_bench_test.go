@@ -20,7 +20,11 @@ func BenchmarkPubSub(b *testing.B) {
 							defer cleanup()
 							// Dłuższy czas na propagację subskrypcji.
 							waitReady(50 * 1e6) // 50ms
-							benchThroughput(b, pub, sub, sz)
+							// Use benchPubSubThroughput instead of benchThroughput
+							// because PUB drops messages when the outbound queue is
+							// full; benchThroughput would deadlock waiting for exact
+							// b.N deliveries.
+							benchPubSubThroughput(b, pub, sub, sz)
 						})
 					}
 				})

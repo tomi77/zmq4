@@ -3,6 +3,7 @@ package bench_test
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	gozmq "github.com/go-zeromq/zmq4"
 )
@@ -23,7 +24,21 @@ func (s *gozeromqSocket) Send(msg []byte) error { return s.send(msg) }
 func (s *gozeromqSocket) Recv() ([]byte, error) { return s.recv() }
 func (s *gozeromqSocket) Close() error          { return s.close() }
 
+// gozeromqSupportsAddr returns ErrNotSupported for inproc addresses.
+// go-zeromq/zmq4 v0.17.0 has a race in its internal qreader goroutine:
+// on inproc, the goroutine may outlive Close() and panic with
+// "makeslice: len out of range" on the next benchmark iteration.
+func gozeromqSupportsAddr(addr string) error {
+	if strings.HasPrefix(addr, "inproc://") {
+		return ErrNotSupported
+	}
+	return nil
+}
+
 func (gozeromqAdapter) PushPull(addr string) (Socket, Socket, func(), error) {
+	if err := gozeromqSupportsAddr(addr); err != nil {
+		return nil, nil, nil, err
+	}
 	ctx := context.Background()
 	push := gozmq.NewPush(ctx)
 	pull := gozmq.NewPull(ctx)
@@ -55,6 +70,9 @@ func (gozeromqAdapter) PushPull(addr string) (Socket, Socket, func(), error) {
 }
 
 func (gozeromqAdapter) ReqRep(addr string) (Socket, Socket, func(), error) {
+	if err := gozeromqSupportsAddr(addr); err != nil {
+		return nil, nil, nil, err
+	}
 	ctx := context.Background()
 	rep := gozmq.NewRep(ctx)
 	req := gozmq.NewReq(ctx)
@@ -92,6 +110,9 @@ func (gozeromqAdapter) ReqRep(addr string) (Socket, Socket, func(), error) {
 }
 
 func (gozeromqAdapter) PubSub(addr string, topic []byte) (Socket, Socket, func(), error) {
+	if err := gozeromqSupportsAddr(addr); err != nil {
+		return nil, nil, nil, err
+	}
 	ctx := context.Background()
 	pub := gozmq.NewPub(ctx)
 	sub := gozmq.NewSub(ctx)
@@ -131,6 +152,9 @@ func (gozeromqAdapter) PubSub(addr string, topic []byte) (Socket, Socket, func()
 }
 
 func (gozeromqAdapter) Pair(addr string) (Socket, Socket, func(), error) {
+	if err := gozeromqSupportsAddr(addr); err != nil {
+		return nil, nil, nil, err
+	}
 	ctx := context.Background()
 	a := gozmq.NewPair(ctx)
 	c := gozmq.NewPair(ctx)
