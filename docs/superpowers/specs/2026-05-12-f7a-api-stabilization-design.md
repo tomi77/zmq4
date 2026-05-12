@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-12
 **Author:** Tomasz Rup
-**Status:** draft
+**Status:** draft (rev 2 — post spec-review fixes)
 
 ---
 
@@ -23,7 +23,7 @@ No socket-interface changes, no new error types, no changes to `Option`, `Poller
 
 ### 2.1 `Subscribe` / `Unsubscribe` — `string` parameter
 
-**Affected files:** `sub.go`, `xsub.go`
+**Affected files:** `sub.go`, `xsub.go`, `cmd/main.go` (call-site update)
 
 **Before:**
 ```go
@@ -49,7 +49,14 @@ func (s *XSUB) Unsubscribe(topic string) error
 passing to the internal wire layer — no semantic change.
 
 **Empty topic (`""`)** continues to subscribe to all messages, matching existing
-behaviour.
+behaviour. The previous API's `nil` (valid `[]byte`, used as subscribe-all in some
+call sites) has no `string` equivalent — all `nil` call sites must be migrated to
+`""`. Affected call sites: `pub_sub_test.go` (1×), `interop/interop_test.go` (2×),
+`cmd/main.go` (1×, uses `[]byte("")` which migrates to `""`).
+
+**Godoc update:** The comments on `SUB.Subscribe`, `SUB.Unsubscribe`,
+`XSUB.Subscribe`, and `XSUB.Unsubscribe` must be updated to replace references to
+`nil` and `[]byte` with `""` and `string`.
 
 ---
 
@@ -119,11 +126,12 @@ func (m Message) String() string {
 
 | File | Action |
 |---|---|
-| `sub.go` | Change `Subscribe([]byte)` and `Unsubscribe([]byte)` to `string` |
-| `xsub.go` | Change `Subscribe([]byte)` and `Unsubscribe([]byte)` to `string` |
+| `sub.go` | Change `Subscribe([]byte)` and `Unsubscribe([]byte)` to `string`; update godoc |
+| `xsub.go` | Change `Subscribe([]byte)` and `Unsubscribe([]byte)` to `string`; update godoc |
 | `message.go` | Add `NewMsg`, `NewStringMsg`, `Frames`, `Frame`, `String` |
-
-All other files — no changes.
+| `cmd/main.go` | Update call site `Subscribe([]byte(""))` → `Subscribe("")` |
+| `pub_sub_test.go` | Migrate `Subscribe(nil)` → `Subscribe("")` |
+| `interop/interop_test.go` | Migrate `Subscribe(nil)` (2×) and `Subscribe(nil)` on `XSUB` → `Subscribe("")` |
 
 ---
 
@@ -142,7 +150,7 @@ All other exported symbols are additive (new functions/methods) — no breakage.
 
 ## 5. Test plan
 
-### Unit tests (`message_test.go`, new file, `package zmq4`)
+### Unit tests (add to existing `message_test.go`, `package zmq4`)
 
 - `NewMsg()` → empty `Message`
 - `NewMsg([]byte("a"), []byte("b"))` → two-frame message, correct content
@@ -151,12 +159,18 @@ All other exported symbols are additive (new functions/methods) — no breakage.
 - `Message{[]byte("a"), []byte("b")}.Frames()` → 2
 - `Message{[]byte("hello")}.Frame(0)` → `[]byte("hello")`
 - `Message{[]byte("hello")}.Frame(1)` → panics (tested with `recover`)
+- `Message{[]byte("hello")}.Frame(-1)` → panics (tested with `recover`)
 - `Message{}.String()` → `""`
 - `Message{[]byte("hi")}.String()` → `"hi"`
 - `Message{[]byte("a"), []byte("b")}.String()` → `"a"` (only frame 0)
 
+### Call-site migration
+
+- Migrate all `Subscribe(nil)` / `Unsubscribe(nil)` → `Subscribe("")` / `Unsubscribe("")`
+  in `pub_sub_test.go` and `interop/interop_test.go`.
+- Migrate `Subscribe([]byte(""))` → `Subscribe("")` in `cmd/main.go`.
+- Any remaining `Subscribe([]byte(...))` call sites → remove the `[]byte(...)` cast.
+
 ### Integration tests (existing suite)
 
-- Update all internal call sites of `Subscribe`/`Unsubscribe` in test files from
-  `[]byte(...)` to plain `string` literals.
 - Run full suite (`go test -race -count=1 ./...`) — all pass.
