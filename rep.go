@@ -97,12 +97,10 @@ func (s *REP) Close() error {
 func splitEnvelope(msg Message) (envelope [][]byte, payload Message) {
 	for i, part := range msg {
 		if len(part) == 0 {
-			// Copy slice headers so envelope and payload do not share the
-			// backing array of msg; prevents a caller append to payload from
-			// silently corrupting envelope frames.
-			env := append([][]byte(nil), msg[:i+1]...)
-			pay := append(Message(nil), msg[i+1:]...)
-			return env, pay
+			// Cap the envelope slice at i+1 so that REP.Send's
+			// append(env, reply...) always allocates a fresh array and
+			// cannot overwrite payload frames in the shared backing array.
+			return msg[:i+1 : i+1], msg[i+1:]
 		}
 	}
 	// No delimiter found — DEALER peer; treat all frames as payload.
