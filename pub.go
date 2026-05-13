@@ -127,35 +127,43 @@ func (pp *pubPipe) removeSub(prefix []byte) {
 
 // pubPipeSet is a goroutine-safe set of pubPipe pointers.
 type pubPipeSet struct {
-	mu    sync.RWMutex
-	pipes []*pubPipe
+	mu       sync.Mutex              // serialises add / remove writes only
+	pipesPtr atomic.Pointer[[]*pubPipe] // copy-on-write; all() reads are lock-free
 }
 
-func newPubPipeSet() *pubPipeSet { return &pubPipeSet{} }
+func newPubPipeSet() *pubPipeSet {
+	ps := &pubPipeSet{}
+	ps.pipesPtr.Store(&[]*pubPipe{})
+	return ps
+}
 
 func (ps *pubPipeSet) add(pp *pubPipe) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
-	ps.pipes = append(ps.pipes, pp)
+	old := *ps.pipesPtr.Load()
+	next := make([]*pubPipe, len(old)+1)
+	copy(next, old)
+	next[len(old)] = pp
+	ps.pipesPtr.Store(&next)
 }
 
 func (ps *pubPipeSet) remove(pp *pubPipe) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
-	for i, q := range ps.pipes {
+	old := *ps.pipesPtr.Load()
+	for i, q := range old {
 		if q == pp {
-			ps.pipes = append(ps.pipes[:i], ps.pipes[i+1:]...)
+			next := make([]*pubPipe, len(old)-1)
+			copy(next, old[:i])
+			copy(next[i:], old[i+1:])
+			ps.pipesPtr.Store(&next)
 			return
 		}
 	}
 }
 
 func (ps *pubPipeSet) all() []*pubPipe {
-	ps.mu.RLock()
-	defer ps.mu.RUnlock()
-	snap := make([]*pubPipe, len(ps.pipes))
-	copy(snap, ps.pipes)
-	return snap
+	return *ps.pipesPtr.Load()
 }
 
 // PUB is a publish socket. It fans out messages to all subscribers whose

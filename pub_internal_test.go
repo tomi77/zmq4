@@ -5,6 +5,20 @@ import (
 	"time"
 )
 
+// TestPubPipeSetAllAllocsZero: all() is called on every PUB.Send — must be zero-alloc.
+func TestPubPipeSetAllAllocsZero(t *testing.T) {
+	ps := newPubPipeSet()
+	for range 3 {
+		ps.add(newPubPipe(nil, nil, 100))
+	}
+	got := testing.AllocsPerRun(100, func() {
+		_ = ps.all()
+	})
+	if got > 0 {
+		t.Fatalf("pubPipeSet.all() with 3 pipes: %.0f allocs/op, want 0", got)
+	}
+}
+
 // TestPubPipeMatchesDoesNotBlockDuringWrite verifies that matches() is lock-free:
 // it must return immediately even while a write lock is held by addSub/removeSub.
 func TestPubPipeMatchesDoesNotBlockDuringWrite(t *testing.T) {
