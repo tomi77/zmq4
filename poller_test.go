@@ -164,8 +164,8 @@ func TestPollerPollOutFullQueueNoEvent(t *testing.T) {
 	// Pipe with capacity 2, both slots filled → not POLLOUT-ready.
 	testPipe := newPipe(nil, nil, 2, 10, Block)
 	push.base.pipes.add(testPipe)
-	testPipe.outCh <- Message{[]byte("a")}
-	testPipe.outCh <- Message{[]byte("b")}
+	testPipe.outCh <- pipeMsg{body: Message{[]byte("a")}}
+	testPipe.outCh <- pipeMsg{body: Message{[]byte("b")}}
 
 	events, err := p.Poll(0)
 	if err != nil {

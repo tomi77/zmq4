@@ -77,7 +77,7 @@ func (pp *pubPipe) writer(closeCh <-chan struct{}) {
 	for {
 		select {
 		case msg := <-pp.outCh:
-			sendFrames(pp.conn, msg) //nolint:errcheck
+			sendFrames(pp.conn, nil, msg) //nolint:errcheck
 		case <-closeCh:
 			return
 		}

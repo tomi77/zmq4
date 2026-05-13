@@ -103,11 +103,11 @@ func TestPipeSendBlock(t *testing.T) {
 	defer close(closeCh)
 
 	p := newPipe(nil, nil, 1, 1000, Block)
-	p.outCh <- Message{[]byte("first")} // fill the queue manually
+	p.outCh <- pipeMsg{body: Message{[]byte("first")}} // fill the queue manually
 
 	sent := make(chan bool, 1)
 	go func() {
-		sent <- p.send(Message{[]byte("second")}, closeCh)
+		sent <- p.send(pipeMsg{body: Message{[]byte("second")}}, closeCh)
 	}()
 
 	select {
@@ -134,9 +134,9 @@ func TestPipeSendDrop(t *testing.T) {
 	defer close(closeCh)
 
 	p := newPipe(nil, nil, 1, 1000, Drop)
-	p.outCh <- Message{[]byte("first")} // fill the queue
+	p.outCh <- pipeMsg{body: Message{[]byte("first")}} // fill the queue
 
-	ok := p.send(Message{[]byte("second")}, closeCh)
+	ok := p.send(pipeMsg{body: Message{[]byte("second")}}, closeCh)
 	if ok {
 		t.Fatal("send with Drop policy on full queue should return false")
 	}
@@ -150,9 +150,9 @@ func TestPipeSendClosedSocket(t *testing.T) {
 	close(closeCh) // already closed
 
 	p := newPipe(nil, nil, 1, 1000, Block)
-	p.outCh <- Message{[]byte("fill")} // fill so Block would normally block
+	p.outCh <- pipeMsg{body: Message{[]byte("fill")}} // fill so Block would normally block
 
-	ok := p.send(Message{[]byte("msg")}, closeCh)
+	ok := p.send(pipeMsg{body: Message{[]byte("msg")}}, closeCh)
 	if ok {
 		t.Fatal("send to closed socket should return false")
 	}

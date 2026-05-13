@@ -49,12 +49,9 @@ func (s *REQ) Send(ctx context.Context, msg Message) error {
 		return err
 	}
 
-	// Prepend the empty delimiter frame as the first part of the message.
-	// writeLoop sends all parts in one uninterrupted sequence via sendFrames.
-	combined := make(Message, 1+len(msg))
-	combined[0] = nil // empty delimiter (zero-length frame)
-	copy(combined[1:], msg)
-	if !p.send(combined, s.base.closeCh) {
+	// Send the empty delimiter frame followed by the payload. reqDelimiter is
+	// a package-level read-only slice so no allocation is needed here.
+	if !p.send(pipeMsg{prefix: reqDelimiter, body: msg}, s.base.closeCh) {
 		s.mu.Lock()
 		s.sent = false
 		s.mu.Unlock()

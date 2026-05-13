@@ -25,7 +25,7 @@ func (s *DEALER) Send(ctx context.Context, msg Message) error {
 	if err != nil {
 		return err
 	}
-	if !p.send(msg, s.base.closeCh) {
+	if !p.send(pipeMsg{body: msg}, s.base.closeCh) {
 		return ErrClosed
 	}
 	return nil

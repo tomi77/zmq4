@@ -8,12 +8,25 @@ import (
 	"github.com/tomi77/zmq4/internal/wire"
 )
 
+// pipeMsg is a message queued for delivery in pipe.outCh. prefix, when
+// non-nil, is sent before body as a single uninterrupted ZMTP message.
+// Carrying prefix separately avoids allocating a combined Message slice
+// in REQ (prepends one empty delimiter) and REP (prepends a routing envelope).
+type pipeMsg struct {
+	prefix [][]byte
+	body   Message
+}
+
+// reqDelimiter is the read-only single-element prefix used by REQ.Send.
+// Shared across all REQ sockets; never mutated.
+var reqDelimiter = [][]byte{nil}
+
 // pipe represents one live ZMTP connection inside a socket.
 type pipe struct {
 	conn         *conn.Conn
 	identity     []byte // peer identity; stable after construction
 	inCh         chan Message
-	outCh        chan Message // send queue; capacity = sndHWM
+	outCh        chan pipeMsg // send queue; capacity = sndHWM
 	overflow     OverflowPolicy
 	onDisconnect func(addr string) // called when peer drops the connection unexpectedly
 	inReady      chan struct{}     // capacity 1; poked by readLoop after each inCh enqueue
@@ -26,7 +39,7 @@ func newPipe(c *conn.Conn, identity []byte, sndHWM, rcvHWM int, overflow Overflo
 		conn:     c,
 		identity: identity,
 		inCh:     make(chan Message, rcvHWM),
-		outCh:    make(chan Message, sndHWM),
+		outCh:    make(chan pipeMsg, sndHWM),
 		overflow: overflow,
 		inReady:  make(chan struct{}, 1),
 		outReady: make(chan struct{}, 1),
@@ -91,8 +104,8 @@ func (p *pipe) writeLoop(closeCh <-chan struct{}) {
 	defer p.wg.Done()
 	for {
 		select {
-		case msg := <-p.outCh:
-			if err := sendFrames(p.conn, msg); err != nil {
+		case pm := <-p.outCh:
+			if err := sendFrames(p.conn, pm.prefix, pm.body); err != nil {
 				p.conn.Close()
 				return
 			}
@@ -106,21 +119,21 @@ func (p *pipe) writeLoop(closeCh <-chan struct{}) {
 	}
 }
 
-// send enqueues msg for delivery according to the pipe's overflow policy.
+// send enqueues pm for delivery according to the pipe's overflow policy.
 // Returns true if the message was queued, false if the socket is closing (Block)
 // or the queue is full (Drop).
-func (p *pipe) send(msg Message, closeCh <-chan struct{}) bool {
+func (p *pipe) send(pm pipeMsg, closeCh <-chan struct{}) bool {
 	switch p.overflow {
 	case Drop:
 		select {
-		case p.outCh <- msg:
+		case p.outCh <- pm:
 			return true
 		default:
 			return false
 		}
 	default: // Block
 		select {
-		case p.outCh <- msg:
+		case p.outCh <- pm:
 			return true
 		case <-closeCh:
 			return false
@@ -253,17 +266,22 @@ func randomIdentity() []byte {
 	return id
 }
 
-// sendFrames writes all parts of msg to c, setting More on all but the last.
-func sendFrames(c *conn.Conn, msg Message) error {
-	for i, part := range msg {
-		more := i < len(msg)-1
-		if err := c.WriteFrame(wire.Frame{
-			Kind: wire.FrameMessage,
-			More: more,
-			Body: part,
-		}); err != nil {
+// sendFrames writes prefix then body to c as a single ZMTP message, setting
+// More on all frames except the last. Either slice may be nil.
+func sendFrames(c *conn.Conn, prefix [][]byte, body Message) error {
+	last := len(prefix) + len(body) - 1
+	i := 0
+	for _, part := range prefix {
+		if err := c.WriteFrame(wire.Frame{Kind: wire.FrameMessage, More: i < last, Body: part}); err != nil {
 			return err
 		}
+		i++
+	}
+	for _, part := range body {
+		if err := c.WriteFrame(wire.Frame{Kind: wire.FrameMessage, More: i < last, Body: part}); err != nil {
+			return err
+		}
+		i++
 	}
 	return nil
 }

@@ -74,10 +74,9 @@ func (s *REP) Send(ctx context.Context, msg Message) error {
 	s.envelope = nil
 	s.mu.Unlock()
 
-	// Combine envelope frames (incl. empty delimiter) with payload into one
-	// message. sendFrames in writeLoop sets More=true on all but the last frame.
-	combined := append(Message(env), msg...)
-	if !p.send(combined, s.base.closeCh) {
+	// Send envelope frames (incl. empty delimiter) followed by payload without
+	// allocating a combined Message slice.
+	if !p.send(pipeMsg{prefix: env, body: msg}, s.base.closeCh) {
 		return ErrClosed
 	}
 	return nil
