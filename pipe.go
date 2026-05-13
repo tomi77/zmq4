@@ -269,22 +269,8 @@ func randomIdentity() []byte {
 	return id
 }
 
-// sendFrames writes prefix then body to c as a single ZMTP message, setting
-// More on all frames except the last. Either slice may be nil.
+// sendFrames writes prefix then body to c as a single ZMTP message, holding
+// the write lock exactly once for the entire multi-frame payload.
 func sendFrames(c *conn.Conn, prefix [][]byte, body Message) error {
-	last := len(prefix) + len(body) - 1
-	i := 0
-	for _, part := range prefix {
-		if err := c.WriteFrame(wire.Frame{Kind: wire.FrameMessage, More: i < last, Body: part}); err != nil {
-			return err
-		}
-		i++
-	}
-	for _, part := range body {
-		if err := c.WriteFrame(wire.Frame{Kind: wire.FrameMessage, More: i < last, Body: part}); err != nil {
-			return err
-		}
-		i++
-	}
-	return nil
+	return c.WriteMsg(prefix, body)
 }

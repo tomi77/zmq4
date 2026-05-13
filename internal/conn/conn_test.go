@@ -435,6 +435,92 @@ func TestPostHandshakeReadAfterClose(t *testing.T) {
 	}
 }
 
+// newPassthroughConn creates a synthetic *Conn backed by one end of a net.Pipe
+// with a passThroughMech that is always Done — safe to use for WriteMsg/WriteFrame
+// tests without driving a real handshake.
+func newPassthroughConn(t *testing.T) (*Conn, net.Conn) {
+	t.Helper()
+	ours, peer := net.Pipe()
+	cfg := newConfig(nil)
+	c := &Conn{
+		raw:  ours,
+		fr:   wire.NewFrameReader(bufio.NewReader(ours), wire.WithMaxBodySize(cfg.maxFrameBodySize)),
+		fw:   wire.NewFrameWriter(ours),
+		mech: passThroughMech{},
+	}
+	t.Cleanup(func() { _ = c.Close(); _ = peer.Close() })
+	return c, peer
+}
+
+// TestConnWriteMsgRoundTrip verifies WriteMsg delivers all frames to the peer
+// with correct More flags and body contents.
+func TestConnWriteMsgRoundTrip(t *testing.T) {
+	c, peer := newPassthroughConn(t)
+	cfg := newConfig(nil)
+	peerConn := &Conn{
+		raw:  peer,
+		fr:   wire.NewFrameReader(bufio.NewReader(peer), wire.WithMaxBodySize(cfg.maxFrameBodySize)),
+		fw:   wire.NewFrameWriter(peer),
+		mech: passThroughMech{},
+	}
+
+	prefix := [][]byte{nil}
+	body := [][]byte{[]byte("hello")}
+
+	errs := make(chan error, 1)
+	go func() { errs <- c.WriteMsg(prefix, body) }()
+
+	f0, err := peerConn.ReadFrame()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !f0.More {
+		t.Fatalf("frame 0: More = false, want true")
+	}
+	if len(f0.Body) != 0 {
+		t.Fatalf("frame 0: body = %q, want empty delimiter", f0.Body)
+	}
+
+	f1, err := peerConn.ReadFrame()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f1.More {
+		t.Fatalf("frame 1: More = true, want false")
+	}
+	if !bytes.Equal(f1.Body, []byte("hello")) {
+		t.Fatalf("frame 1: body = %q, want hello", f1.Body)
+	}
+
+	if err := <-errs; err != nil {
+		t.Fatalf("WriteMsg: %v", err)
+	}
+}
+
+// TestConnWriteMsgAllocsAtMostOne verifies that WriteMsg for a 2-frame message
+// (the REQ/REP common case) allocates at most 1 heap object — the same as a
+// single WriteFrame. Two sequential WriteFrame calls would cost 2 allocs.
+func TestConnWriteMsgAllocsAtMostOne(t *testing.T) {
+	c, peer := newPassthroughConn(t)
+	go func() {
+		buf := make([]byte, 1024)
+		for {
+			if _, err := peer.Read(buf); err != nil {
+				return
+			}
+		}
+	}()
+
+	prefix := [][]byte{nil}
+	body := [][]byte{[]byte("hello")}
+	got := testing.AllocsPerRun(100, func() {
+		_ = c.WriteMsg(prefix, body)
+	})
+	if got > 1 {
+		t.Fatalf("WriteMsg 2 frames: %.0f allocs/op, want ≤1", got)
+	}
+}
+
 func TestPostHandshakeRaceDetectorClean(t *testing.T) {
 	// Full round-trip + concurrent writes + Close. Run with -race in CI.
 	c, s, cErr, sErr := runHandshakePair(t,

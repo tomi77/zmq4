@@ -26,8 +26,9 @@ type Conn struct {
 	mech     security.Mechanism
 	peerMeta wire.Metadata
 
-	writeMu sync.Mutex
-	closed  atomic.Bool
+	writeMu   sync.Mutex
+	closed    atomic.Bool
+	msgFrames [wire.MsgMaxFrames]wire.Frame // scratch for WriteMsg, used under writeMu
 }
 
 // ReadFrame reads one post-handshake application frame. NOT goroutine-safe.
@@ -61,6 +62,47 @@ func (c *Conn) ReadFrame() (wire.Frame, error) {
 		// SUBSCRIBE / CANCEL / PING / PONG / unknown — pass through to F5.
 		return f, nil
 	}
+}
+
+// WriteMsg writes prefix followed by body as one logical ZMTP message,
+// holding writeMu for the entire operation. This reduces N lock/unlock
+// cycles and N net.Buffers.WriteTo calls to 1 each for an N-frame message.
+// For NULL/PLAIN mechanisms (the common case) mech.Wrap is a no-op
+// pass-through, so the frame bodies are written verbatim with zero copies.
+func (c *Conn) WriteMsg(prefix, body [][]byte) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	if c.closed.Load() {
+		return net.ErrClosed
+	}
+	total := len(prefix) + len(body)
+	last := total - 1
+	var frames []wire.Frame
+	if total <= len(c.msgFrames) {
+		frames = c.msgFrames[:total]
+	} else {
+		frames = make([]wire.Frame, total)
+	}
+	k := 0
+	for _, part := range prefix {
+		f := wire.Frame{Kind: wire.FrameMessage, More: k < last, Body: part}
+		out, err := c.mech.Wrap(f)
+		if err != nil {
+			return fmt.Errorf("conn: mech.Wrap: %w", err)
+		}
+		frames[k] = out
+		k++
+	}
+	for _, part := range body {
+		f := wire.Frame{Kind: wire.FrameMessage, More: k < last, Body: part}
+		out, err := c.mech.Wrap(f)
+		if err != nil {
+			return fmt.Errorf("conn: mech.Wrap: %w", err)
+		}
+		frames[k] = out
+		k++
+	}
+	return c.fw.WriteMsg(frames)
 }
 
 // WriteFrame writes one post-handshake application frame. Goroutine-safe

@@ -230,11 +230,15 @@ func TestREPFairQueue(t *testing.T) {
 		if err := reqs[i].Connect(ctx, ep); err != nil {
 			t.Fatalf("Connect[%d]: %v", i, err)
 		}
-		t.Cleanup(func() { reqs[i].Close() })
+		req := reqs[i]
+		t.Cleanup(func() { req.Close() })
 		go func(idx int) {
 			reqs[idx].Send(context.Background(), zmq4.Message{[]byte{byte(idx)}})
 		}(i)
 	}
+
+	// Allow goroutines to be scheduled and enqueue their messages before blocking.
+	time.Sleep(20 * time.Millisecond)
 
 	for range N {
 		msg, err := rep.Recv(ctx)

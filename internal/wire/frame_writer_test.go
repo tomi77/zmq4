@@ -6,6 +6,51 @@ import (
 	"testing"
 )
 
+// TestFrameWriterWriteMsgMatchesSequential verifies WriteMsg produces identical
+// on-wire bytes to the equivalent sequence of WriteFrame calls.
+func TestFrameWriterWriteMsgMatchesSequential(t *testing.T) {
+	frames := []Frame{
+		{Kind: FrameMessage, More: true, Body: []byte("envelope")},
+		{Kind: FrameMessage, More: false, Body: []byte("payload")},
+	}
+	var seq bytes.Buffer
+	fw1 := NewFrameWriter(&seq)
+	for _, f := range frames {
+		if err := fw1.WriteFrame(f); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var batch bytes.Buffer
+	fw2 := NewFrameWriter(&batch)
+	if err := fw2.WriteMsg(frames); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(seq.Bytes(), batch.Bytes()) {
+		t.Fatalf("WriteMsg bytes differ:\n  seq:   %x\n  batch: %x", seq.Bytes(), batch.Bytes())
+	}
+}
+
+// TestFrameWriterWriteMsgAllocsAtMostOne verifies that WriteMsg for a 2-frame
+// message allocates at most 1 heap object — the same as a single WriteFrame
+// call. The one unavoidable allocation is the net.Buffers slice header that
+// escapes to heap when passed to (*net.Buffers).WriteTo. The key property is
+// that N frames costs 1 alloc, not N (as N sequential WriteFrame calls would).
+func TestFrameWriterWriteMsgAllocsAtMostOne(t *testing.T) {
+	var sink bytes.Buffer
+	fw := NewFrameWriter(&sink)
+	frames := []Frame{
+		{Kind: FrameMessage, More: true, Body: []byte("a")},
+		{Kind: FrameMessage, More: false, Body: []byte("b")},
+	}
+	got := testing.AllocsPerRun(100, func() {
+		sink.Reset()
+		_ = fw.WriteMsg(frames)
+	})
+	if got > 1 {
+		t.Fatalf("WriteMsg 2 frames: %.0f allocs/op, want ≤1", got)
+	}
+}
+
 func TestFrameWriterRoundTrip(t *testing.T) {
 	frames := []Frame{
 		{Kind: FrameMessage, More: true, Body: []byte("a")},

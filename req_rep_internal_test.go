@@ -6,16 +6,17 @@ import (
 	"testing"
 )
 
-// TestREQREPRoundTripAllocsLeq8 verifies that a full inproc REQ/REP round-trip
-// uses ≤8 heap allocations. The budget breaks down as:
+// TestREQREPRoundTripAllocsLeq6 verifies that a full inproc REQ/REP round-trip
+// uses ≤6 heap allocations. The budget breaks down as:
 //
 //	2 × (ReadFrame body per frame × 2 frames) = 4  (wire layer, unavoidable)
 //	2 × 1 Message-slice make per receive       = 4  (readLoop, after pre-sizing)
+//	2 × 1 net.Buffers header per WriteMsg      = 2  (writeLoop, one per 2-frame send)
 //
-// The nil-start readLoop (current baseline) allocates 2 Message slices per
-// 2-frame receive (one for each append growth), giving 2×2+4 = 8 → 10 total.
-// Pre-sizing with make(Message,0,2) drops that to 2×1+4 = 6 → 8 total.
-func TestREQREPRoundTripAllocsLeq8(t *testing.T) {
+// Pre-sizing readLoop make(Message,0,2): 4+2 = 6 write allocs pre-batching.
+// WriteMsg batching (2 frames → 1 WriteTo call): 2 bufs allocs → 2 total send allocs.
+// Grand total: 4 (ReadFrame) + 2 (Message slices) + 2 (WriteMsg bufs) − 2 improvement = 6.
+func TestREQREPRoundTripAllocsLeq6(t *testing.T) {
 	ctx := context.Background()
 	ep := "inproc://TestREQREPRoundTripAllocsLeq8_" + strings.ReplaceAll(t.Name(), "/", "_")
 	rep := NewREP()
@@ -44,8 +45,8 @@ func TestREQREPRoundTripAllocsLeq8(t *testing.T) {
 		rep.Send(ctx, reply) //nolint:errcheck
 		req.Recv(ctx)        //nolint:errcheck
 	})
-	if got > 8 {
-		t.Fatalf("REQ/REP inproc round-trip: %.0f allocs/op, want ≤8", got)
+	if got > 6 {
+		t.Fatalf("REQ/REP inproc round-trip: %.0f allocs/op, want ≤6", got)
 	}
 }
 
