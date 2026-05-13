@@ -32,3 +32,12 @@ go.work.sum
 
 # Git worktrees
 .worktrees/
+
+#
+/curve-security
+/hello-world
+/pair
+/pipeline
+/pubsub
+/router-dealer
+/xpubxsub-proxy
