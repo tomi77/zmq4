@@ -73,7 +73,10 @@ func (p *pipe) readLoop(ps *pipeSet, closeCh <-chan struct{}) {
 		}
 	}()
 
-	var msg Message
+	// Pre-size for the common 2-frame case (REQ/REP delimiter+payload).
+	// Avoids a realloc when the second frame arrives in the next loop iteration,
+	// where the compiler cannot merge the two appends into a single allocation.
+	msg := make(Message, 0, 2)
 	for {
 		f, err := p.conn.ReadFrame()
 		if err != nil {
@@ -93,7 +96,7 @@ func (p *pipe) readLoop(ps *pipeSet, closeCh <-chan struct{}) {
 			case <-closeCh:
 				return
 			}
-			msg = nil
+			msg = make(Message, 0, 2)
 		}
 	}
 }
