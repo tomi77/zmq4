@@ -108,6 +108,13 @@ func parseHello(cmd wire.Command, sharedKey *SharedKey) (PublicKey, error) {
 			return PublicKey{}, fmt.Errorf("%w: non-zero padding at byte %d", ErrMalformedHello, 2+i)
 		}
 	}
+	// Curve25519 keys are 255-bit values; bit 255 (MSB of byte 31) is always 0
+	// in canonical little-endian form but is silently ignored by x25519. A
+	// tampered key with this bit flipped produces the same shared secret and
+	// would pass box verification unchanged — reject it explicitly.
+	if cmd.Data[2+72+31]&0x80 != 0 {
+		return PublicKey{}, fmt.Errorf("%w: non-canonical C' (high bit set)", ErrMalformedHello)
+	}
 	var clientTransPub PublicKey
 	copy(clientTransPub[:], cmd.Data[2+72:2+72+32])
 
