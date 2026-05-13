@@ -101,8 +101,12 @@ func (p *pipe) readLoop(ps *pipeSet, closeCh <-chan struct{}) {
 	}
 }
 
-// writeLoop drains outCh and writes messages to conn. Exits on write error
-// (closing the connection so readLoop also exits) or when closeCh is closed.
+// writeLoop drains outCh and writes messages to conn. After sending the first
+// message it opportunistically drains any additional already-queued messages in
+// a tight non-blocking loop before yielding back to the scheduler and signalling
+// outReady. This reduces goroutine context-switch overhead during bursts.
+// Exits on write error (closing the connection so readLoop also exits) or when
+// closeCh is closed.
 func (p *pipe) writeLoop(closeCh <-chan struct{}) {
 	defer p.wg.Done()
 	for {
@@ -112,6 +116,21 @@ func (p *pipe) writeLoop(closeCh <-chan struct{}) {
 				p.conn.Close()
 				return
 			}
+			// Opportunistic drain: process any messages already waiting in
+			// outCh without returning to the outer select (which yields to
+			// the scheduler). A single outReady token covers the whole batch.
+			for {
+				select {
+				case pm = <-p.outCh:
+					if err := sendFrames(p.conn, pm.prefix, pm.body); err != nil {
+						p.conn.Close()
+						return
+					}
+				default:
+					goto batchDone
+				}
+			}
+		batchDone:
 			select {
 			case p.outReady <- struct{}{}:
 			default:
