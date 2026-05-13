@@ -232,7 +232,7 @@ func TestREPFairQueue(t *testing.T) {
 		}
 		t.Cleanup(func() { reqs[i].Close() })
 		go func(idx int) {
-			reqs[idx].Send(ctx, zmq4.Message{[]byte{byte(idx)}})
+			reqs[idx].Send(context.Background(), zmq4.Message{[]byte{byte(idx)}})
 		}(i)
 	}
 
