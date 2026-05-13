@@ -3,8 +3,12 @@
 package bench_test
 
 import (
+	"errors"
 	"fmt"
 	"strings"
+	"sync"
+	"syscall"
+	"time"
 
 	pebbe "github.com/pebbe/zmq4"
 )
@@ -124,6 +128,33 @@ func (pebbeAdapter) PubSub(addr string, topic []byte) (Socket, Socket, func(), e
 		pub.Close(); sub.Close()
 		return nil, nil, nil, fmt.Errorf("subscribe: %w", err)
 	}
+	// SetRcvtimeo caps how long RecvBytes can block, so closeSub can safely
+	// wait for any in-progress call to return before destroying the socket.
+	// Without this, calling Close while a goroutine is inside RecvBytes
+	// triggers a libzmq internal assertion (signaler.cpp:368).
+	if err := sub.SetRcvtimeo(10 * time.Millisecond); err != nil {
+		pub.Close(); sub.Close()
+		return nil, nil, nil, fmt.Errorf("set rcvtimeo: %w", err)
+	}
+
+	var (
+		subMu        sync.Mutex
+		subClosed    bool
+		subInRecv    sync.WaitGroup
+		subCloseOnce sync.Once
+		pubCloseOnce sync.Once
+	)
+	closePub := func() { pubCloseOnce.Do(func() { pub.Close() }) }
+	closeSub := func() {
+		subCloseOnce.Do(func() {
+			subMu.Lock()
+			subClosed = true
+			subMu.Unlock()
+			subInRecv.Wait() // wait ≤10ms for any RecvBytes in flight to return
+			sub.Close()
+		})
+	}
+
 	pubSock := &pebbeSocket{
 		send: func(b []byte) error {
 			frame := append(append([]byte(nil), topic...), b...)
@@ -131,14 +162,39 @@ func (pebbeAdapter) PubSub(addr string, topic []byte) (Socket, Socket, func(), e
 			return err
 		},
 		recv:  func() ([]byte, error) { panic("pub cannot recv") },
-		close: func() error { pub.Close(); return nil },
+		close: func() error { closePub(); return nil },
 	}
 	subSock := &pebbeSocket{
-		send:  func(b []byte) error { panic("sub cannot send") },
-		recv:  func() ([]byte, error) { return sub.RecvBytes(0) },
-		close: func() error { sub.Close(); return nil },
+		send: func(b []byte) error { panic("sub cannot send") },
+		recv: func() ([]byte, error) {
+			subMu.Lock()
+			if subClosed {
+				subMu.Unlock()
+				return nil, errors.New("closed")
+			}
+			subInRecv.Add(1)
+			subMu.Unlock()
+			defer subInRecv.Done()
+			for {
+				b, err := sub.RecvBytes(0)
+				if err == nil {
+					return b, nil
+				}
+				subMu.Lock()
+				closed := subClosed
+				subMu.Unlock()
+				if closed {
+					return nil, errors.New("closed")
+				}
+				if pebbe.AsErrno(err) != pebbe.Errno(syscall.EAGAIN) {
+					return nil, err
+				}
+				// EAGAIN from SetRcvtimeo — not yet closing, retry
+			}
+		},
+		close: func() error { closeSub(); return nil },
 	}
-	cleanup := func() { pub.Close(); sub.Close() }
+	cleanup := func() { closePub(); closeSub() }
 	return pubSock, subSock, cleanup, nil
 }
 
