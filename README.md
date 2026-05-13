@@ -133,18 +133,17 @@ cd benchmarks && ./scripts/bench.sh -tags libzmq  # include pebbe (requires libz
 
 | Message size | tomi77 inproc | tomi77 tcp | go-zeromq tcp | pebbe tcp |
 |---|--:|--:|--:|--:|
-| 64 B   |   598   |   340   |    95   | n/a § |
-| 1 KiB  | 2 618   | 1 133   |   980   | n/a § |
-| 64 KiB | 7 308   | 5 570   | 1 934   | n/a § |
-| 1 MiB  | 6 293   | 9 600   | 1 916   | n/a § |
+| 64 B   |   598   |   340   |    95   |   402   |
+| 1 KiB  | 2 618   | 1 133   |   980   | 3 496   |
+| 64 KiB | 7 308   | 5 570   | 1 934   | 5 204   |
+| 1 MiB  | 6 293   | 9 600   | 1 916   | 4 593   |
 
 † Inproc messages are delivered as Go channel values without copying bytes through
 the wire — the reported MB/s reflects message-rate × size and is not bounded by memory
 bandwidth.  
 ‡ PUB drops messages when the outbound queue is full; numbers reflect send-side rate and
 have high run-to-run variance (±2×) due to the interaction between drop policy and
-goroutine scheduling.  
-§ `pebbe/PubSub` triggers a libzmq internal assertion (`signaler.cpp:368`) under repeated close/reopen cycles and is excluded.
+goroutine scheduling.
 
 ### REQ/REP · round-trip latency (µs/op)
 
@@ -161,7 +160,7 @@ goroutine scheduling.
 |---|--:|--:|--:|
 | PAIR      |  3 | 26 | 1 |
 | PUSH/PULL |  3 | 26 | 1 |
-| PUB/SUB   | 4–5 | 10–17 | n/a |
+| PUB/SUB   | 4–5 | 10–17 | 2–3 |
 | REQ/REP   |  8 | 32 | 4 |
 
 ## Non-goals (for now)
