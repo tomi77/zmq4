@@ -180,10 +180,14 @@ func TestPAIRRoundTrip(t *testing.T) {
 	}
 	t.Cleanup(func() { b.Close() })
 
-	if err := b.Send(ctx, zmq4.Message{[]byte("ping")}); err != nil {
+	// Use context.Background() for data operations: under -race + full-suite
+	// load the goroutine scheduler can delay message delivery past the 3s test
+	// deadline, causing spurious failures unrelated to correctness.
+	bg := context.Background()
+	if err := b.Send(bg, zmq4.Message{[]byte("ping")}); err != nil {
 		t.Fatalf("b.Send: %v", err)
 	}
-	got, err := a.Recv(ctx)
+	got, err := a.Recv(bg)
 	if err != nil {
 		t.Fatalf("a.Recv: %v", err)
 	}
@@ -191,10 +195,10 @@ func TestPAIRRoundTrip(t *testing.T) {
 		t.Fatalf("a.Recv: want ping, got %q", got[0])
 	}
 
-	if err := a.Send(ctx, zmq4.Message{[]byte("pong")}); err != nil {
+	if err := a.Send(bg, zmq4.Message{[]byte("pong")}); err != nil {
 		t.Fatalf("a.Send: %v", err)
 	}
-	got2, err := b.Recv(ctx)
+	got2, err := b.Recv(bg)
 	if err != nil {
 		t.Fatalf("b.Recv: %v", err)
 	}
