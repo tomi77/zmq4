@@ -115,28 +115,28 @@ cd benchmarks && ./scripts/bench.sh -tags libzmq  # include pebbe (requires libz
 
 | Message size | tomi77 inproc | tomi77 tcp | go-zeromq tcp | pebbe tcp |
 |---|--:|--:|--:|--:|
-| 64 B   |         186 |    25.8 |     8.8 |   174   |
-| 1 KiB  |       2 945 |   355   |   129   | 1 434   |
-| 64 KiB |     169 237 | 4 514   | 3 570   | 3 445   |
-| 1 MiB  | 2 603 733 † | 6 303   | 6 345   | 4 844   |
+| 64 B   |         197 |    26.5 |     8.8 |   174   |
+| 1 KiB  |       3 119 |   406   |   134   | 1 434   |
+| 64 KiB |     203 000 | 5 540   | 3 923   | 3 445   |
+| 1 MiB  | 3 252 000 † | 8 009   | 5 888   | 4 844   |
 
 ### PUSH/PULL · one-way throughput (MB/s)
 
 | Message size | tomi77 inproc | tomi77 tcp | go-zeromq tcp | pebbe tcp |
 |---|--:|--:|--:|--:|
-| 64 B   |         159 |    15.5 |     7.4 |   175   |
-| 1 KiB  |       2 837 |   254   |   101   | 1 367   |
-| 64 KiB |     160 138 | 4 915   | 3 345   | 3 326   |
-| 1 MiB  | 2 986 952 † | 7 160   | 6 332   | 4 849   |
+| 64 B   |         189 |    23.7 |     8.9 |   175   |
+| 1 KiB  |       3 087 |   372   |   134   | 1 367   |
+| 64 KiB |     194 000 | 5 182   | 3 442   | 3 326   |
+| 1 MiB  | 3 089 000 † | 6 528   | 7 022   | 4 849   |
 
 ### PUB/SUB · send-side throughput (MB/s) ‡
 
 | Message size | tomi77 inproc | tomi77 tcp | go-zeromq tcp | pebbe tcp |
 |---|--:|--:|--:|--:|
-| 64 B   |   571   |   464   |    72.8 | n/a § |
-| 1 KiB  | 2 182   | 1 473   |   705   | n/a § |
-| 64 KiB | 6 177   | 6 014   |   926   | n/a § |
-| 1 MiB  | 4 153   | 10 370  | 1 749   | n/a § |
+| 64 B   |   499   |   340   |    95   | n/a § |
+| 1 KiB  | 1 917   | 1 133   |   980   | n/a § |
+| 64 KiB |   — ¶  | 5 570   | 1 934   | n/a § |
+| 1 MiB  |   — ¶  | 9 600   | 1 916   | n/a § |
 
 † Inproc messages are delivered as Go channel values without copying bytes through
 the wire — the reported MB/s reflects message-rate × size and is not bounded by memory
@@ -144,16 +144,19 @@ bandwidth.
 ‡ PUB drops messages when the outbound queue is full; numbers reflect send-side rate and
 have high run-to-run variance (±2×) due to the interaction between drop policy and
 goroutine scheduling.  
-§ `pebbe/PubSub` triggers a libzmq internal assertion (`signaler.cpp:368`) under repeated close/reopen cycles and is excluded.
+§ `pebbe/PubSub` triggers a libzmq internal assertion (`signaler.cpp:368`) under repeated close/reopen cycles and is excluded.  
+¶ At 64 KiB and 1 MiB the inproc send queue fills faster than the subscriber drains it;
+PUB silently drops the excess frames and the benchmark receiver, waiting for exactly
+`B.N` deliveries, deadlocks.
 
 ### REQ/REP · round-trip latency (µs/op)
 
 | Message size | tomi77 inproc | tomi77 tcp | go-zeromq tcp | pebbe tcp |
 |---|--:|--:|--:|--:|
-| 64 B   |  1.38 |  27.7 |  39.8 |   84.8 |
-| 1 KiB  |  1.38 |  27.5 |  38.7 |   88.7 |
-| 64 KiB |  1.45 |  52.4 |  59.2 |  132.4 |
-| 1 MiB  |  1.38 | 278   | 311   |  510   |
+| 64 B   |  1.37 |  27.5 |  36.7 |   84.8 |
+| 1 KiB  |  1.35 |  28.1 |  40.2 |   88.7 |
+| 64 KiB |  1.33 |  53.4 |  66.4 |  132.4 |
+| 1 MiB  |  1.33 | 293   | 276   |  510   |
 
 ### Heap allocations per operation (tcp)
 
