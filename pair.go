@@ -28,10 +28,19 @@ func (s *PAIR) exclusivePeer(c *conn.Conn) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.base.pipes.len() > 0 {
-		return ErrPairAlreadyConnected
+		dead := s.base.pipes.singlePipe()
+		// If the sole existing pipe is already dead (inCh closed by the peer's
+		// writeLoop), proactively evict it so a reconnecting peer can take over
+		// without waiting for the readLoop's deferred ps.remove to be scheduled.
+		if dead != nil && dead.inChClosed.Load() {
+			s.base.pipes.remove(dead)
+		} else {
+			return ErrPairAlreadyConnected
+		}
 	}
 	identity := peerIdentity(c.PeerMetadata())
 	p := newPipe(c, identity, s.base.cfg.sndHWM, s.base.cfg.rcvHWM, s.base.cfg.sndOverflow)
+	p.socketCloseCh = s.base.closeCh
 	linkOrStorePipe(c, p)
 	s.base.pipes.add(p)
 	p.start(s.base.pipes, s.base.closeCh)

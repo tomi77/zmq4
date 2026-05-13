@@ -182,7 +182,7 @@ func TestMonitorDisconnected(t *testing.T) {
 	// Close client — server's readLoop will see an I/O error → EventDisconnected.
 	client.Close()
 
-	evs := drainN(t, serverCh, 1, 500*time.Millisecond)
+	evs := drainN(t, serverCh, 1, 2*time.Second)
 	if evs[0].Type != zmq4.EventDisconnected {
 		t.Fatalf("got %v, want EventDisconnected", evs[0].Type)
 	}

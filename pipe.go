@@ -3,6 +3,7 @@ package zmq4
 import (
 	"crypto/rand"
 	"sync"
+	"sync/atomic"
 
 	"github.com/tomi77/zmq4/internal/conn"
 	"github.com/tomi77/zmq4/internal/wire"
@@ -54,10 +55,18 @@ type pipe struct {
 	// they observe peer/inprocLink before choosing the data path.
 	linkReady chan struct{}
 
+	// socketCloseCh is the owning socket's closeCh, set after newPipe. Used by
+	// linkOrStorePipe to detect that the first-arriving pipe's socket closed before
+	// the partner arrived, avoiding a zombie inprocLink.
+	socketCloseCh <-chan struct{}
+
 	// inChCloseOnce ensures inCh is closed exactly once. For non-inproc pipes
 	// readLoop closes it; for inproc pipes the peer's writeLoop closes it via
 	// closeInCh(). Using sync.Once prevents the double-close panic in all paths.
 	inChCloseOnce sync.Once
+	// inChClosed is set true immediately before close(inCh). Allows PAIR's
+	// exclusivePeer hook to detect a dead pipe without draining the channel.
+	inChClosed atomic.Bool
 }
 
 func newPipe(c *conn.Conn, identity []byte, sndHWM, rcvHWM int, overflow OverflowPolicy) *pipe {
@@ -75,7 +84,10 @@ func newPipe(c *conn.Conn, identity []byte, sndHWM, rcvHWM int, overflow Overflo
 
 // closeInCh closes inCh exactly once; safe to call from multiple goroutines.
 func (p *pipe) closeInCh() {
-	p.inChCloseOnce.Do(func() { close(p.inCh) })
+	p.inChCloseOnce.Do(func() {
+		p.inChClosed.Store(true)
+		close(p.inCh)
+	})
 }
 
 // markNonInproc closes linkReady for non-inproc pipes so goroutines start
@@ -118,15 +130,24 @@ func (p *pipe) readLoop(ps *pipeSet, closeCh <-chan struct{}) {
 	// For the first inproc pipe this blocks until the second addConn calls
 	// linkInproc, which guarantees peer/inprocLink are visible via the
 	// channel-close happens-before.
+	// Wait for the link decision with closeCh priority guard: if both closeCh
+	// and linkReady are ready simultaneously (inproc paired just as socket
+	// closes), prefer linkReady so that the pipe stays in pipeSet for close()
+	// to snapshot — ps.remove here would strip EventClosed from the monitor.
 	var inproc bool
 	select {
 	case <-p.linkReady:
 		inproc = p.inprocLink != nil
 	case <-closeCh:
-		// Socket closed before link was established; clean up and exit.
-		ps.remove(p)
-		p.closeInCh()
-		return
+		select {
+		case <-p.linkReady:
+			inproc = p.inprocLink != nil
+		default:
+			// Genuinely not linked yet; socket closed before link established.
+			ps.remove(p)
+			p.closeInCh()
+			return
+		}
 	}
 
 	// selfClose is set when we exit via closeCh (intentional socket close).
@@ -157,7 +178,15 @@ func (p *pipe) readLoop(ps *pipeSet, closeCh <-chan struct{}) {
 		// defer peer.closeInCh(). readLoop must not close it.
 		select {
 		case <-p.inprocLink.closed:
-			selfClose = false
+			// The link was closed. If our own socket is also closing (closeCh
+			// ready), treat this as selfClose so close() owns the pipeSet
+			// snapshot and EventClosed emission — don't call ps.remove here.
+			select {
+			case <-closeCh:
+				selfClose = true
+			default:
+				selfClose = false
+			}
 		case <-closeCh:
 			selfClose = true
 			p.inprocLink.close()
@@ -200,11 +229,20 @@ func (p *pipe) readLoop(ps *pipeSet, closeCh <-chan struct{}) {
 func (p *pipe) writeLoop(closeCh <-chan struct{}) {
 	defer p.wg.Done()
 
-	// Wait for the link decision before choosing the data path.
+	// Wait for the link decision before choosing the data path. When both
+	// closeCh and linkReady fire in the same scheduling window (inproc link
+	// established while the socket is simultaneously closing), Go's select
+	// may pick closeCh. If linkReady was also ready, we must still enter
+	// inprocWriteLoop so its deferred peer.closeInCh() and link.close() run;
+	// skipping them leaves the peer with inChClosed==false (zombie pipe).
 	select {
 	case <-p.linkReady:
 	case <-closeCh:
-		return
+		select {
+		case <-p.linkReady:
+		default:
+			return
+		}
 	}
 
 	if p.inprocLink != nil {
@@ -303,8 +341,12 @@ func (p *pipe) inprocWriteLoop(closeCh <-chan struct{}) {
 }
 
 // buildInprocMsg combines a pipeMsg's prefix and body into a single Message
-// slice for direct delivery to the peer's inCh. One allocation per call.
+// slice for direct delivery to the peer's inCh. When prefix is absent (PAIR,
+// PUSH/PULL) the body is returned as-is with no allocation.
 func buildInprocMsg(pm pipeMsg) Message {
+	if len(pm.prefix) == 0 {
+		return pm.body
+	}
 	total := len(pm.prefix) + len(pm.body)
 	msg := make(Message, 0, total)
 	msg = append(msg, pm.prefix...)
@@ -341,6 +383,10 @@ type pipeSet struct {
 	byID  map[string]*pipe // identity → pipe; O(1) lookup for ROUTER routing
 	robin int
 	added chan struct{}
+
+	// fastSingle is the sole pipe when exactly one peer is connected, nil otherwise.
+	// Maintained under mu; read without mu for a lock-free singlePipe fast path.
+	fastSingle atomic.Pointer[pipe]
 }
 
 func newPipeSet() *pipeSet {
@@ -355,6 +401,11 @@ func (ps *pipeSet) add(p *pipe) {
 	defer ps.mu.Unlock()
 	ps.pipes = append(ps.pipes, p)
 	ps.byID[string(p.identity)] = p
+	if len(ps.pipes) == 1 {
+		ps.fastSingle.Store(ps.pipes[0])
+	} else {
+		ps.fastSingle.Store(nil)
+	}
 	close(ps.added)
 	ps.added = make(chan struct{})
 }
@@ -372,8 +423,13 @@ func (ps *pipeSet) remove(p *pipe) {
 			if ps.robin >= len(ps.pipes) {
 				ps.robin = 0
 			}
-			return
+			break
 		}
+	}
+	if len(ps.pipes) == 1 {
+		ps.fastSingle.Store(ps.pipes[0])
+	} else {
+		ps.fastSingle.Store(nil)
 	}
 }
 
@@ -420,13 +476,9 @@ func (ps *pipeSet) len() int {
 
 // singlePipe returns the sole connected pipe when exactly one peer is active,
 // nil otherwise. Used by recvAny as a reflect-free fast path.
+// Lock-free: reads the fastSingle atomic maintained by add/remove.
 func (ps *pipeSet) singlePipe() *pipe {
-	ps.mu.Lock()
-	defer ps.mu.Unlock()
-	if len(ps.pipes) == 1 {
-		return ps.pipes[0]
-	}
-	return nil
+	return ps.fastSingle.Load()
 }
 
 // twoPipes returns both pipes when exactly two peers are active, nil otherwise.

@@ -35,6 +35,20 @@ func linkOrStorePipe(c *conn.Conn, p *pipe) {
 	if loaded {
 		inprocPendingPipes.Delete(pairID)
 		if peer, ok := actual.(*pipe); ok && peer != nil {
+			// Guard against zombie: if the stored peer's socket has already closed
+			// (its goroutines exited via closeCh before we arrived), linking would
+			// create an inprocWriteLoop whose deferred peer.closeInCh() never runs
+			// because writeLoop exits via closeCh instead of entering inprocWriteLoop.
+			// In that case fall back to non-inproc so both pipes fail-fast on I/O error.
+			if peer.socketCloseCh != nil {
+				select {
+				case <-peer.socketCloseCh:
+					p.markNonInproc()
+					peer.markNonInproc()
+					return
+				default:
+				}
+			}
 			linkInproc(p, peer)
 		} else {
 			// nil sentinel: partner is a non-pipe socket (e.g. pubPipe).
@@ -197,6 +211,10 @@ func (sb *socketBase) doServerHandshake(raw net.Conn, socketType string) {
 	}
 	sb.emit(SocketEvent{Type: EventHandshakeSucceeded, Endpoint: addr})
 	if err := sb.addConn(c, socketType); err != nil {
+		// Unblock any inproc partner that stored itself in inprocPendingPipes while
+		// waiting for this server-side linkOrStorePipe call. Without this, the
+		// client's pipe goroutines block on linkReady indefinitely.
+		signalInprocNoPipe(c)
 		c.Close()
 	}
 }
@@ -249,6 +267,7 @@ func (sb *socketBase) addConn(c *conn.Conn, localSocketType string) error {
 	}
 	identity := peerIdentity(meta)
 	p := newPipe(c, identity, sb.cfg.sndHWM, sb.cfg.rcvHWM, sb.cfg.sndOverflow)
+	p.socketCloseCh = sb.closeCh
 	if sb.cfg.monitorCh != nil {
 		p.onDisconnect = func(addr string) {
 			sb.emit(SocketEvent{Type: EventDisconnected, Endpoint: addr})
@@ -361,10 +380,11 @@ func (sb *socketBase) recvAny(ctx context.Context) (Message, *pipe, error) {
 		}
 
 		// General path: 0 or ≥3 pipes.
+		added := sb.pipes.currentAdded()
 		pipes := sb.pipes.all()
 		if len(pipes) == 0 {
 			select {
-			case <-sb.pipes.currentAdded():
+			case <-added:
 			case <-ctx.Done():
 				return nil, nil, ctx.Err()
 			case <-sb.closeCh:

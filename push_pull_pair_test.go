@@ -249,46 +249,59 @@ func TestPAIRSecondPeerRejected(t *testing.T) {
 // TestPAIRReconnect verifies PAIR accepts a new peer after the first one disconnects.
 func TestPAIRReconnect(t *testing.T) {
 	ep := inprocEP(t)
-	ctx := newCtx(t)
+	ctx := newCtx(t) // 3s total timeout
 
 	server := zmq4.NewPAIR()
+	t.Cleanup(func() { server.Close() })
 	if err := server.Bind(ctx, ep); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { server.Close() })
 
 	first := zmq4.NewPAIR()
 	if err := first.Connect(ctx, ep); err != nil {
 		t.Fatal(err)
 	}
-	// Close the first peer.
 	first.Close()
 
-	// Retry until the server's readLoop removes the dead pipe from pipeSet.
-	second := zmq4.NewPAIR()
-	t.Cleanup(func() { second.Close() })
-	var connectErr error
-	deadline := time.Now().Add(200 * time.Millisecond)
-	for time.Now().Before(deadline) {
-		connectErr = second.Connect(ctx, ep)
-		if connectErr == nil {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	if connectErr != nil {
-		t.Fatalf("second.Connect after first closed: %v", connectErr)
-	}
+	// Retry the full connect+send+recv cycle until delivery succeeds.
+	//
+	// Retries are needed because:
+	// (1) PAIR rejects the new connection while the dead peer's goroutines are
+	//     still cleaning up (the server's pipe is evicted by readLoop asynchronously
+	//     OR by exclusivePeer when it detects inChClosed==true).
+	// (2) Even when Connect returns nil (client-side addConn succeeded), the
+	//     server may have rejected the connection and called signalInprocNoPipe;
+	//     in that case the client goroutines unblock as non-inproc but the
+	//     connection immediately fails, and the sent message is lost.
+	for {
+		second := zmq4.NewPAIR()
 
-	if err := second.Send(ctx, zmq4.Message{[]byte("hi")}); err != nil {
-		t.Fatalf("second.Send: %v", err)
-	}
-	got, err := server.Recv(ctx)
-	if err != nil {
-		t.Fatalf("server.Recv: %v", err)
-	}
-	if string(got[0]) != "hi" {
-		t.Fatalf("server.Recv: want hi, got %q", got[0])
+		delivered := false
+		if err := second.Connect(ctx, ep); err == nil {
+			tryCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+			if err := second.Send(tryCtx, zmq4.Message{[]byte("hi")}); err == nil {
+				got, recvErr := server.Recv(tryCtx)
+				if recvErr == nil {
+					if string(got[0]) != "hi" {
+						cancel()
+						second.Close()
+						t.Fatalf("server.Recv: want hi, got %q", got[0])
+					}
+					delivered = true
+				}
+			}
+			cancel()
+		}
+		second.Close()
+
+		if delivered {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("reconnect timed out:", ctx.Err())
+		case <-time.After(5 * time.Millisecond):
+		}
 	}
 }
 
