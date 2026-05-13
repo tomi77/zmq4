@@ -6,19 +6,19 @@ import (
 	"testing"
 )
 
-// TestREQREPRoundTripAllocsLeq6 verifies that a full inproc REQ/REP round-trip
-// uses ≤6 heap allocations. The budget breaks down as:
+// TestREQREPRoundTripAllocsLeq2 verifies that a full inproc REQ/REP round-trip
+// uses ≤2 heap allocations after the inproc fast-path optimization (C).
+// The budget breaks down as:
 //
-//	2 × (ReadFrame body per frame × 2 frames) = 4  (wire layer, unavoidable)
-//	2 × 1 Message-slice make per receive       = 4  (readLoop, after pre-sizing)
-//	2 × 1 net.Buffers header per WriteMsg      = 2  (writeLoop, one per 2-frame send)
+//	1 × buildInprocMsg in writeLoop (REQ→REP direction) = 1
+//	1 × buildInprocMsg in writeLoop (REP→REQ direction) = 1
 //
-// Pre-sizing readLoop make(Message,0,2): 4+2 = 6 write allocs pre-batching.
-// WriteMsg batching (2 frames → 1 WriteTo call): 2 bufs allocs → 2 total send allocs.
-// Grand total: 4 (ReadFrame) + 2 (Message slices) + 2 (WriteMsg bufs) − 2 improvement = 6.
-func TestREQREPRoundTripAllocsLeq6(t *testing.T) {
+// The inproc fast path bypasses ZMTP wire serialization entirely: no
+// ReadFrame body allocations, no readLoop Message-slice makes, no
+// net.Buffers header escapes. Grand total: 2.
+func TestREQREPRoundTripAllocsLeq2(t *testing.T) {
 	ctx := context.Background()
-	ep := "inproc://TestREQREPRoundTripAllocsLeq8_" + strings.ReplaceAll(t.Name(), "/", "_")
+	ep := "inproc://TestREQREPRoundTripAllocsLeq2_" + strings.ReplaceAll(t.Name(), "/", "_")
 	rep := NewREP()
 	req := NewREQ()
 	if err := rep.Bind(ctx, ep); err != nil {
@@ -45,8 +45,8 @@ func TestREQREPRoundTripAllocsLeq6(t *testing.T) {
 		rep.Send(ctx, reply) //nolint:errcheck
 		req.Recv(ctx)        //nolint:errcheck
 	})
-	if got > 6 {
-		t.Fatalf("REQ/REP inproc round-trip: %.0f allocs/op, want ≤6", got)
+	if got > 2 {
+		t.Fatalf("REQ/REP inproc round-trip: %.0f allocs/op, want ≤2", got)
 	}
 }
 

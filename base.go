@@ -11,6 +11,59 @@ import (
 	"github.com/tomi77/zmq4/internal/transport"
 )
 
+// inprocPendingPipes holds the first party of an inproc pair while waiting
+// for the second addConn call to arrive. Key: pairID (uint64).
+// Value is either a *pipe (will participate in the fast path) or nil (the
+// arriving party uses a non-pipe type such as pubPipe, so the partner must
+// fall back to conn-based I/O). Entries live only between the two addConn
+// calls; removed by LoadAndDelete.
+var inprocPendingPipes sync.Map
+
+// linkOrStorePipe applies the inproc / non-inproc link decision to p.
+// For inproc connections it either links p with its waiting peer or stores p
+// for the partner to link later. For non-inproc connections it calls
+// markNonInproc immediately. Must be called before p.start().
+func linkOrStorePipe(c *conn.Conn, p *pipe) {
+	pairID, ok := c.InprocPairID()
+	if !ok {
+		p.markNonInproc()
+		return
+	}
+	// LoadOrStore is atomic: exactly one caller stores, the other loads.
+	// This avoids the TOCTOU race between LoadAndDelete + Store.
+	actual, loaded := inprocPendingPipes.LoadOrStore(pairID, p)
+	if loaded {
+		inprocPendingPipes.Delete(pairID)
+		if peer, ok := actual.(*pipe); ok && peer != nil {
+			linkInproc(p, peer)
+		} else {
+			// nil sentinel: partner is a non-pipe socket (e.g. pubPipe).
+			p.markNonInproc()
+		}
+	}
+	// else: stored as first of pair; goroutines wait on linkReady.
+}
+
+// signalInprocNoPipe is called by postHandshake hooks that produce a non-*pipe
+// connection (e.g. pubPipe). It either wakes a waiting *pipe partner in
+// non-inproc mode, or stores a nil sentinel so the arriving partner knows to
+// skip the fast path.
+func signalInprocNoPipe(c *conn.Conn) {
+	pairID, ok := c.InprocPairID()
+	if !ok {
+		return
+	}
+	actual, loaded := inprocPendingPipes.LoadOrStore(pairID, (*pipe)(nil))
+	if loaded {
+		inprocPendingPipes.Delete(pairID)
+		if peer, ok := actual.(*pipe); ok && peer != nil {
+			// Partner pipe was waiting; wake it in non-inproc mode.
+			peer.markNonInproc()
+		}
+	}
+	// else: nil sentinel stored; arriving *pipe partner will find it.
+}
+
 // compatiblePeers maps local socket type to allowed peer socket types.
 var compatiblePeers = map[string]map[string]bool{
 	"REQ":    {"REP": true, "ROUTER": true},
@@ -201,6 +254,7 @@ func (sb *socketBase) addConn(c *conn.Conn, localSocketType string) error {
 			sb.emit(SocketEvent{Type: EventDisconnected, Endpoint: addr})
 		}
 	}
+	linkOrStorePipe(c, p)
 	sb.pipes.add(p)
 	p.start(sb.pipes, sb.closeCh)
 	return nil
@@ -226,6 +280,8 @@ func (sb *socketBase) close() {
 		sb.wg.Wait()
 		// Snapshot all live pipes. Emit EventClosed for each before closing
 		// the connection so the remote address is still valid.
+		// Inproc readLoop does NOT call ps.remove on the closeCh path (it lets
+		// close() own cleanup), so inproc pipes are guaranteed to be here.
 		closing := sb.pipes.all()
 		for _, p := range closing {
 			if p.conn != nil { // conn is nil in test-only pipes created without a real connection
@@ -273,7 +329,10 @@ func (sb *socketBase) recvAny(ctx context.Context) (Message, *pipe, error) {
 				if ok {
 					return msg, p, nil
 				}
-				// Pipe died; readLoop has already called ps.remove. Retry.
+				// Pipe died. Proactively remove to avoid busy-loop in the
+				// inproc case where readLoop's ps.remove may lag behind inCh
+				// closure due to goroutine scheduling.
+				sb.pipes.remove(p)
 				continue
 			}
 		}
@@ -290,11 +349,13 @@ func (sb *socketBase) recvAny(ctx context.Context) (Message, *pipe, error) {
 				if ok {
 					return msg, p1, nil
 				}
+				sb.pipes.remove(p1)
 				continue
 			case msg, ok := <-p2.inCh:
 				if ok {
 					return msg, p2, nil
 				}
+				sb.pipes.remove(p2)
 				continue
 			}
 		}
@@ -316,7 +377,9 @@ func (sb *socketBase) recvAny(ctx context.Context) (Message, *pipe, error) {
 			return nil, nil, err
 		}
 		if msg == nil {
-			// Dead pipe — removed by readLoop; retry.
+			// Dead pipe — proactively remove in case readLoop's ps.remove
+			// hasn't fired yet (inproc scheduling window).
+			sb.pipes.remove(p)
 			continue
 		}
 		return msg, p, nil

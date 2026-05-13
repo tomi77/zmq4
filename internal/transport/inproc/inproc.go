@@ -4,9 +4,33 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"sync/atomic"
 
 	"github.com/tomi77/zmq4/internal/transport/internal/sentinels"
 )
+
+// pairIDCounter is incremented for every new net.Pipe pair created by the
+// inproc transport. Both halves of a pair carry the same ID so that
+// socketBase.addConn can link the two corresponding pipe structs for the
+// inproc data fast-path (optimization C).
+var pairIDCounter uint64
+
+// inprocNetConn wraps a net.Conn with a pairID identifying which net.Pipe
+// pair this end belongs to. Both ends of the same net.Pipe share a pairID.
+type inprocNetConn struct {
+	net.Conn
+	pairID uint64
+}
+
+// PairID returns the pair identifier shared by both halves of a net.Pipe.
+func (i *inprocNetConn) PairID() uint64 { return i.pairID }
+
+// newPair allocates a fresh net.Pipe and wraps both ends with a shared pairID.
+func newPair() (server, client net.Conn) {
+	id := atomic.AddUint64(&pairIDCounter, 1)
+	a, b := net.Pipe()
+	return &inprocNetConn{Conn: a, pairID: id}, &inprocNetConn{Conn: b, pairID: id}
+}
 
 // Listen registers name in the inproc registry and returns a net.Listener.
 // If the name is already bound, returns ErrInprocAlreadyBound.
@@ -40,9 +64,9 @@ func Listen(_ context.Context, name string) (net.Listener, error) {
 	// orphan conn for it to drain and close.
 	accepts := make([]net.Conn, 0, len(drainSnap))
 	for _, pd := range drainSnap {
-		a, b := net.Pipe()
-		pd.ready <- acceptResult{conn: b} // cap-1, non-blocking
-		accepts = append(accepts, a)
+		serverConn, clientConn := newPair()
+		pd.ready <- acceptResult{conn: clientConn} // cap-1, non-blocking
+		accepts = append(accepts, serverConn)
 	}
 	registry.mu.Unlock()
 
@@ -116,10 +140,10 @@ func Dial(ctx context.Context, name string) (net.Conn, error) {
 
 	registry.mu.Lock()
 	if lis, ok := registry.bound[name]; ok {
-		a, b := net.Pipe()
+		serverConn, clientConn := newPair()
 		registry.mu.Unlock()
-		lis.enqueue(a)
-		return b, nil
+		lis.enqueue(serverConn)
+		return clientConn, nil
 	}
 
 	pd := &pendingDial{ready: make(chan acceptResult, 1)}

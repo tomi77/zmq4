@@ -21,6 +21,17 @@ type pipeMsg struct {
 // Shared across all REQ sockets; never mutated.
 var reqDelimiter = [][]byte{nil}
 
+// inprocLink is a shared lifecycle signal between two inproc-paired pipes.
+// closed is closed by the first writeLoop that exits, waking both readLoops.
+type inprocLink struct {
+	closed    chan struct{}
+	closeOnce sync.Once
+}
+
+func (l *inprocLink) close() {
+	l.closeOnce.Do(func() { close(l.closed) })
+}
+
 // pipe represents one live ZMTP connection inside a socket.
 type pipe struct {
 	conn         *conn.Conn
@@ -32,18 +43,59 @@ type pipe struct {
 	inReady      chan struct{}     // capacity 1; poked by readLoop after each inCh enqueue
 	outReady     chan struct{}     // capacity 1; poked by writeLoop after each outCh dequeue
 	wg           sync.WaitGroup
+
+	// Inproc fast path (optimization C). Set by linkInproc before start().
+	// Both fields are nil for TCP/IPC pipes.
+	peer       *pipe        // direct delivery target; writeLoop skips ZMTP
+	inprocLink *inprocLink  // shared lifecycle signal; both readLoops watch it
+
+	// linkReady is closed when the link decision is made (either linkInproc or
+	// markNonInproc). readLoop and writeLoop block on linkReady at startup so
+	// they observe peer/inprocLink before choosing the data path.
+	linkReady chan struct{}
+
+	// inChCloseOnce ensures inCh is closed exactly once. For non-inproc pipes
+	// readLoop closes it; for inproc pipes the peer's writeLoop closes it via
+	// closeInCh(). Using sync.Once prevents the double-close panic in all paths.
+	inChCloseOnce sync.Once
 }
 
 func newPipe(c *conn.Conn, identity []byte, sndHWM, rcvHWM int, overflow OverflowPolicy) *pipe {
 	return &pipe{
-		conn:     c,
-		identity: identity,
-		inCh:     make(chan Message, rcvHWM),
-		outCh:    make(chan pipeMsg, sndHWM),
-		overflow: overflow,
-		inReady:  make(chan struct{}, 1),
-		outReady: make(chan struct{}, 1),
+		conn:      c,
+		identity:  identity,
+		inCh:      make(chan Message, rcvHWM),
+		outCh:     make(chan pipeMsg, sndHWM),
+		overflow:  overflow,
+		inReady:   make(chan struct{}, 1),
+		outReady:  make(chan struct{}, 1),
+		linkReady: make(chan struct{}),
 	}
+}
+
+// closeInCh closes inCh exactly once; safe to call from multiple goroutines.
+func (p *pipe) closeInCh() {
+	p.inChCloseOnce.Do(func() { close(p.inCh) })
+}
+
+// markNonInproc closes linkReady for non-inproc pipes so goroutines start
+// without waiting. Must be called before start() for TCP/IPC pipes.
+func (p *pipe) markNonInproc() {
+	close(p.linkReady)
+}
+
+// linkInproc connects two pipe halves for direct inproc message passing.
+// It sets the peer and inprocLink fields on both pipes and closes their
+// linkReady channels so goroutines can proceed with the fast path.
+// Must be called before either pipe's start().
+func linkInproc(a, b *pipe) {
+	link := &inprocLink{closed: make(chan struct{})}
+	a.peer = b
+	b.peer = a
+	a.inprocLink = link
+	b.inprocLink = link
+	close(a.linkReady)
+	close(b.linkReady)
 }
 
 // start launches the reader and writer goroutines. closeCh is closed by the
@@ -55,36 +107,75 @@ func (p *pipe) start(ps *pipeSet, closeCh <-chan struct{}) {
 }
 
 // readLoop reads multipart messages from the conn and delivers them to
-// inCh. Exits when conn.ReadFrame returns an error (including net.ErrClosed
-// after socket.Close) or closeCh is closed. A partially-assembled multipart
-// message in progress is discarded on exit.
+// inCh, OR for inproc pipes waits for the peer's writeLoop to exit.
+// Exits when conn.ReadFrame returns an error (including net.ErrClosed
+// after socket.Close) or closeCh is closed.
 func (p *pipe) readLoop(ps *pipeSet, closeCh <-chan struct{}) {
 	defer p.wg.Done()
-	defer close(p.inCh)
-	defer func() {
+
+	// Wait for the link decision (inproc vs. conn-based). For non-inproc
+	// pipes markNonInproc() has pre-closed linkReady so this is immediate.
+	// For the first inproc pipe this blocks until the second addConn calls
+	// linkInproc, which guarantees peer/inprocLink are visible via the
+	// channel-close happens-before.
+	var inproc bool
+	select {
+	case <-p.linkReady:
+		inproc = p.inprocLink != nil
+	case <-closeCh:
+		// Socket closed before link was established; clean up and exit.
 		ps.remove(p)
-		if p.onDisconnect != nil {
+		p.closeInCh()
+		return
+	}
+
+	// selfClose is set when we exit via closeCh (intentional socket close).
+	// For inproc pipes on the closeCh path we skip ps.remove so that close()
+	// can snapshot and emit EventClosed; it owns cleanup for that path.
+	var selfClose bool
+
+	defer func() {
+		if !selfClose {
+			ps.remove(p)
+		}
+		if p.onDisconnect != nil && !selfClose {
+			// Peer disconnected (inproc or conn-based): emit EventDisconnected
+			// unless our socket is also shutting down simultaneously.
 			select {
 			case <-closeCh:
-				// Socket is shutting down; EventClosed is handled by close().
+				// Both sides closing at the same time; EventClosed handled by close().
 			default:
-				p.onDisconnect(p.conn.RemoteAddr().String())
+				if p.conn != nil {
+					p.onDisconnect(p.conn.RemoteAddr().String())
+				}
 			}
 		}
 	}()
 
+	if inproc {
+		// Inproc: peer's inprocWriteLoop owns inCh exclusively via
+		// defer peer.closeInCh(). readLoop must not close it.
+		select {
+		case <-p.inprocLink.closed:
+			selfClose = false
+		case <-closeCh:
+			selfClose = true
+			p.inprocLink.close()
+		}
+		return
+	}
+
+	// Non-inproc: readLoop is the sole closer of inCh.
+	defer p.closeInCh()
+
+	// Non-inproc: read ZMTP frames from the conn.
 	// Pre-size for the common 2-frame case (REQ/REP delimiter+payload).
-	// Avoids a realloc when the second frame arrives in the next loop iteration,
-	// where the compiler cannot merge the two appends into a single allocation.
 	msg := make(Message, 0, 2)
 	for {
 		f, err := p.conn.ReadFrame()
 		if err != nil {
 			return
 		}
-		// f.Body is freshly allocated by FrameReader on every ReadFrame call
-		// (mech.Unwrap for NULL/PLAIN is pass-through; CURVE returns a new buffer).
-		// No copy needed — the slice is already owned.
 		msg = append(msg, f.Body)
 		if !f.More {
 			select {
@@ -101,14 +192,27 @@ func (p *pipe) readLoop(ps *pipeSet, closeCh <-chan struct{}) {
 	}
 }
 
-// writeLoop drains outCh and writes messages to conn. After sending the first
-// message it opportunistically drains any additional already-queued messages in
-// a tight non-blocking loop before yielding back to the scheduler and signalling
-// outReady. This reduces goroutine context-switch overhead during bursts.
-// Exits on write error (closing the connection so readLoop also exits) or when
-// closeCh is closed.
+// writeLoop drains outCh and writes messages to the peer. For inproc pipes
+// it delivers directly to the peer's inCh (bypassing ZMTP serialization).
+// For conn-based pipes it encodes frames and writes via conn.WriteMsg.
+// After each batch it signals outReady. Exits on error, peer shutdown, or
+// when closeCh is closed.
 func (p *pipe) writeLoop(closeCh <-chan struct{}) {
 	defer p.wg.Done()
+
+	// Wait for the link decision before choosing the data path.
+	select {
+	case <-p.linkReady:
+	case <-closeCh:
+		return
+	}
+
+	if p.inprocLink != nil {
+		p.inprocWriteLoop(closeCh)
+		return
+	}
+
+	// Non-inproc: conn-based write path with opportunistic drain.
 	for {
 		select {
 		case pm := <-p.outCh:
@@ -139,6 +243,73 @@ func (p *pipe) writeLoop(closeCh <-chan struct{}) {
 			return
 		}
 	}
+}
+
+// inprocWriteLoop is the fast-path writer for inproc-paired pipes. It
+// delivers pipeMsg directly to peer.inCh as a combined Message slice,
+// bypassing ZMTP encoding/decoding entirely. When it exits it closes
+// peer.inCh (the only writer, so no concurrent-close race) and fires
+// the shared inprocLink to wake both readLoops.
+func (p *pipe) inprocWriteLoop(closeCh <-chan struct{}) {
+	peer := p.peer
+	link := p.inprocLink
+	defer link.close()
+	defer peer.closeInCh()
+
+	for {
+		select {
+		case pm := <-p.outCh:
+			msg := buildInprocMsg(pm)
+			select {
+			case peer.inCh <- msg:
+				select {
+				case peer.inReady <- struct{}{}:
+				default:
+				}
+			case <-link.closed:
+				return
+			case <-closeCh:
+				return
+			}
+			// Opportunistic drain.
+			for {
+				select {
+				case pm = <-p.outCh:
+					msg = buildInprocMsg(pm)
+					select {
+					case peer.inCh <- msg:
+						select {
+						case peer.inReady <- struct{}{}:
+						default:
+						}
+					case <-link.closed:
+						return
+					case <-closeCh:
+						return
+					}
+				default:
+					goto inprocDone
+				}
+			}
+		inprocDone:
+			select {
+			case p.outReady <- struct{}{}:
+			default:
+			}
+		case <-closeCh:
+			return
+		}
+	}
+}
+
+// buildInprocMsg combines a pipeMsg's prefix and body into a single Message
+// slice for direct delivery to the peer's inCh. One allocation per call.
+func buildInprocMsg(pm pipeMsg) Message {
+	total := len(pm.prefix) + len(pm.body)
+	msg := make(Message, 0, total)
+	msg = append(msg, pm.prefix...)
+	msg = append(msg, pm.body...)
+	return msg
 }
 
 // send enqueues pm for delivery according to the pipe's overflow policy.

@@ -181,6 +181,7 @@ func NewPUB(opts ...Option) *PUB {
 		pubPipes: newPubPipeSet(),
 	}
 	s.base.postHandshake = func(c *conn.Conn) error {
+		signalInprocNoPipe(c)
 		pp := newPubPipe(c, nil, s.base.cfg.sndHWM)
 		pp.wg.Add(2)
 		s.pubPipes.add(pp)

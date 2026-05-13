@@ -24,6 +24,7 @@ func NewXPUB(opts ...Option) *XPUB {
 		subCh:    make(chan Message, xpubSubChCap),
 	}
 	s.base.postHandshake = func(c *conn.Conn) error {
+		signalInprocNoPipe(c)
 		pp := newPubPipe(c, s.subCh, s.base.cfg.sndHWM)
 		pp.wg.Add(2)
 		s.pubPipes.add(pp)

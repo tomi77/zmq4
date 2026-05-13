@@ -156,3 +156,16 @@ func (c *Conn) RemoteAddr() net.Addr { return c.raw.RemoteAddr() }
 // LocalAddr returns the underlying raw net.Conn's local address.
 // Stable for the lifetime of the *Conn including post-Close.
 func (c *Conn) LocalAddr() net.Addr { return c.raw.LocalAddr() }
+
+// InprocPairID returns the inproc pair ID and true when the underlying
+// transport is an inproc connection (both ends share the same pair ID).
+// Returns (0, false) for TCP, IPC, and other transports.
+// Used by socketBase.addConn to link the two pipe halves for the inproc
+// data fast-path without importing the inproc package (cycle prevention).
+func (c *Conn) InprocPairID() (uint64, bool) {
+	type pairIDer interface{ PairID() uint64 }
+	if p, ok := c.raw.(pairIDer); ok {
+		return p.PairID(), true
+	}
+	return 0, false
+}
